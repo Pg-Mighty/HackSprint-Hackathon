@@ -562,11 +562,11 @@ input:disabled {
 input[type='range'] {
   appearance: none;
   background: rgba(0, 0, 0, 0.05);
-  height: 4px;
+  height: 2px;
   border-radius: 2px;
-  accent-color: var(--accent-color);
-  width: 60px;
+  width: 80px;
   cursor: pointer;
+  transition: all 0.3s var(--inertia);
 }
 
 .app.dark input[type='range'] {
@@ -575,10 +575,21 @@ input[type='range'] {
 
 input[type='range']::-webkit-slider-thumb {
   appearance: none;
-  width: 12px;
-  height: 12px;
-  background: var(--accent-color);
+  width: 14px;
+  height: 14px;
+  background: var(--active-color, var(--accent-color));
   border-radius: 50%;
-  border: 2px solid var(--bg-color);
-  box-shadow: 0 0 10px rgba(93, 93, 255, 0.3);
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 12px var(--active-color, var(--accent-color));
+  transition: transform 0.2s var(--inertia), box-shadow 0.2s var(--inertia);
+  margin-top: -6px;
+}
+
+input[type='range']:hover::-webkit-slider-thumb {
+  transform: scale(1.2);
+  box-shadow: 0 0 18px var(--active-color, var(--accent-color));
+}
+
+input[type='range']:active::-webkit-slider-thumb {
+  transform: scale(0.9);
 }

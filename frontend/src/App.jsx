@@ -473,7 +473,15 @@ export default function App() {
             {showAdvancedPicker && <input type="color" value={strokeColor} onChange={(e) => setStrokeColor(e.target.value)} autoFocus onBlur={() => setShowAdvancedPicker(false)} />}
           </div>
           <div className="width-adjuster">
-            <input type="range" min="1" max="15" value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))} disabled={!joined} />
+            <input
+              type="range"
+              min="1"
+              max="15"
+              value={strokeWidth}
+              onChange={(e) => setStrokeWidth(Number(e.target.value))}
+              disabled={!joined}
+              style={{ '--active-color': strokeColor }}
+            />
           </div>
           <button className="settings-toggle" onClick={() => setDarkMode(!darkMode)} title="Theme">
             {darkMode ? (
