@@ -73,6 +73,7 @@ export default function App() {
   const [startTime] = useState(Date.now());
   const [elapsed, setElapsed] = useState('00:00');
   const [showAdvancedPicker, setShowAdvancedPicker] = useState(false);
+  const colorInputRef = useRef(null);
 
   const linesRef = useRef(lines);
   const shapesRef = useRef(shapes);
@@ -468,9 +469,15 @@ export default function App() {
               title={p.name}
             />
           ))}
-          <div className="advanced-trigger" onClick={() => setShowAdvancedPicker(!showAdvancedPicker)}>
+          <div className="advanced-trigger" onClick={() => colorInputRef.current?.click()}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-            {showAdvancedPicker && <input type="color" value={strokeColor} onChange={(e) => setStrokeColor(e.target.value)} autoFocus onBlur={() => setShowAdvancedPicker(false)} />}
+            <input
+              ref={colorInputRef}
+              type="color"
+              value={strokeColor}
+              onChange={(e) => setStrokeColor(e.target.value)}
+              style={{ position: 'absolute', opacity: 0, inset: 0, cursor: 'pointer', border: 'none' }}
+            />
           </div>
           <div className="width-adjuster">
             <input

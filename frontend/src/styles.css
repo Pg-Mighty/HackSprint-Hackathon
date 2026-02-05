@@ -232,11 +232,14 @@ body {
 }
 
 .toolbar.position-left {
-  left: 32px;
+  left: 20px;
   top: 50%;
   transform: translateY(-50%);
   flex-direction: column;
   padding: 12px 8px;
+  width: 52px;
+  gap: 12px;
+  align-items: center;
 }
 
 .toolbar.hidden {
@@ -278,6 +281,39 @@ body {
 
 .position-left .tool-group {
   flex-direction: column;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+}
+
+.position-left .tool-group {
+  flex-direction: column;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+}
+
+.position-left .palette,
+.position-left .width-adjuster {
+  border-left: none !important;
+  border-right: none !important;
+  border-top: 1px solid var(--ghost-border);
+  padding: 12px 0 0 0 !important;
+  margin: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.position-left .width-adjuster {
+  padding: 12px 0 !important;
+  gap: 0;
+}
+
+.position-left input[type='range'] {
+  width: 36px;
 }
 
 .tool-group button {
