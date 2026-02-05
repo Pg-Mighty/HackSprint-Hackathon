@@ -1,11 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
-import { Circle, Layer, Rect, Stage, Line, Group, Transformer } from 'react-konva';
+import { Circle, Layer, Rect, Stage, Line, Group, Transformer, Image } from 'react-konva';
 
 const DEFAULT_COLOR = '#5d5dff';
 
 const buildId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const useImage = (src) => {
+  const [img, setImg] = useState(null);
+  useEffect(() => {
+    if (!src) return;
+    const image = new window.Image();
+    image.src = src;
+    image.onload = () => setImg(image);
+  }, [src]);
+  return [img];
+};
 
 const socketUrl = 'http://localhost:8080/whiteboard-sockets';
 
@@ -26,6 +37,27 @@ const palette = [
   { name: 'Ember', color: '#ea580c' },
   { name: 'Rose', color: '#dc2626' }
 ];
+
+const URLImage = ({ image, onTransform, tool }) => {
+  const [img] = useImage(image.src);
+  return (
+    <Image
+      image={img}
+      id={image.id}
+      name={image.id}
+      x={image.x}
+      y={image.y}
+      width={image.width}
+      height={image.height}
+      scaleX={image.scaleX}
+      scaleY={image.scaleY}
+      rotation={image.rotation}
+      draggable={tool === 'select'}
+      onTransformEnd={onTransform}
+      onDragEnd={onTransform}
+    />
+  );
+};
 
 const createStompClient = ({ onConnect, onDisconnect }) =>
   new Client({
@@ -53,7 +85,10 @@ export default function App() {
   const [strokeWidth, setStrokeWidth] = useState(3);
   const [lines, setLines] = useState([]);
   const [shapes, setShapes] = useState([]);
+  const [images, setImages] = useState([]);
   const [cursors, setCursors] = useState({});
+  const [history, setHistory] = useState([{ lines: [], shapes: [], images: [] }]);
+  const [historyStep, setHistoryStep] = useState(0);
   const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
 
   const [drawingLineId, setDrawingLineId] = useState(null);
@@ -77,11 +112,13 @@ export default function App() {
 
   const linesRef = useRef(lines);
   const shapesRef = useRef(shapes);
+  const imagesRef = useRef(images);
   const uiTimerRef = useRef(null);
   const idleTimerRef = useRef(null);
 
   useEffect(() => { linesRef.current = lines; }, [lines]);
   useEffect(() => { shapesRef.current = shapes; }, [shapes]);
+  useEffect(() => { imagesRef.current = images; }, [images]);
 
   // Session timer
   useEffect(() => {
@@ -119,7 +156,44 @@ export default function App() {
       if (filtered.length !== prev.length) publishRoomEvent('shape-removed', { id });
       return filtered;
     });
+    setImages(prev => {
+      const filtered = prev.filter(i => i.id !== id);
+      if (filtered.length !== prev.length) publishRoomEvent('image-removed', { id });
+      return filtered;
+    });
+    saveHistory();
   }, [publishRoomEvent]);
+
+  const saveHistory = useCallback(() => {
+    const newState = { lines: linesRef.current, shapes: shapesRef.current, images: imagesRef.current };
+    setHistory(prev => {
+      const newHistory = prev.slice(0, historyStep + 1);
+      return [...newHistory, newState];
+    });
+    setHistoryStep(prev => prev + 1);
+  }, [historyStep]);
+
+  const undo = useCallback(() => {
+    if (historyStep === 0) return;
+    const newStep = historyStep - 1;
+    const prevState = history[newStep];
+    setLines(prevState.lines);
+    setShapes(prevState.shapes);
+    setImages(prevState.images);
+    setHistoryStep(newStep);
+    publishRoomEvent('state-sync', { lines: prevState.lines, shapes: prevState.shapes, images: prevState.images });
+  }, [history, historyStep, publishRoomEvent]);
+
+  const redo = useCallback(() => {
+    if (historyStep === history.length - 1) return;
+    const newStep = historyStep + 1;
+    const nextState = history[newStep];
+    setLines(nextState.lines);
+    setShapes(nextState.shapes);
+    setImages(nextState.images);
+    setHistoryStep(newStep);
+    publishRoomEvent('state-sync', { lines: nextState.lines, shapes: nextState.shapes, images: nextState.images });
+  }, [history, historyStep, publishRoomEvent]);
 
   // UI Visibility & Idle Logic
   const resetUiTimer = useCallback(() => {
@@ -147,21 +221,56 @@ export default function App() {
         removeElement(selectedId);
         setSelectedId(null);
       }
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z') { e.preventDefault(); undo(); }
+        if (e.key === 'y') { e.preventDefault(); redo(); }
+      }
     };
+
+    const handlePaste = (e) => {
+      const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+      for (const item of items) {
+        if (item.type.indexOf('image') !== -1) {
+          const blob = item.getAsFile();
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const pos = stageRef.current.getPointerPosition() || { x: 100, y: 100 };
+            const img = {
+              id: buildId(),
+              src: event.target.result,
+              x: pos.x,
+              y: pos.y,
+              width: 300,
+              height: 200,
+              scaleX: 1,
+              scaleY: 1,
+              rotation: 0
+            };
+            setImages(prev => [...prev, img]);
+            publishRoomEvent('image-created', img);
+            saveHistory();
+          };
+          reader.readAsDataURL(blob);
+        }
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('mousemove', handleGlobalActivity);
     window.addEventListener('mousedown', handleGlobalActivity);
     window.addEventListener('touchstart', handleGlobalActivity);
+    window.addEventListener('paste', handlePaste);
     resetUiTimer();
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('mousemove', handleGlobalActivity);
       window.removeEventListener('mousedown', handleGlobalActivity);
       window.removeEventListener('touchstart', handleGlobalActivity);
+      window.removeEventListener('paste', handlePaste);
       if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     };
-  }, [resetUiTimer, selectedId, removeElement]);
+  }, [resetUiTimer, selectedId, removeElement, undo, redo]);
 
   // Magnet Drag Style
   const driftStyle = useMemo(() => {
@@ -228,16 +337,32 @@ export default function App() {
           if (inc?.id) setCursors(prev => { const n = { ...prev }; delete n[inc.id]; return n; });
         });
 
+        client.subscribe(`${topicBase}/image-created`, (m) => {
+          const inc = safeParse(m);
+          if (inc) setImages(prev => prev.some(i => i.id === inc.id) ? prev : [...prev, inc]);
+        });
+
+        client.subscribe(`${topicBase}/image-updated`, (m) => {
+          const inc = safeParse(m);
+          if (inc) setImages(prev => prev.map(i => (i.id === inc.id ? inc : i)));
+        });
+
+        client.subscribe(`${topicBase}/image-removed`, (m) => {
+          const inc = safeParse(m);
+          if (inc?.id) setImages(prev => prev.filter(i => i.id !== inc.id));
+        });
+
         client.subscribe(`${topicBase}/state-sync`, (m) => {
           const inc = safeParse(m);
           if (inc?.lines) setLines(inc.lines);
           if (inc?.shapes) setShapes(inc.shapes);
+          if (inc?.images) setImages(inc.images);
         });
 
         client.subscribe(`${topicBase}/request-state`, () => {
           client.publish({
             destination: `${appBase}/state-sync`,
-            body: JSON.stringify({ roomId, lines: linesRef.current, shapes: shapesRef.current })
+            body: JSON.stringify({ roomId, lines: linesRef.current, shapes: shapesRef.current, images: imagesRef.current })
           });
         });
 
@@ -290,8 +415,8 @@ export default function App() {
         setSelectedId(null);
       } else {
         const name = e.target.name();
-        // Allow selecting both shapes and lines
-        if (shapes.some(s => s.id === name) || lines.some(l => l.id === name)) {
+        // Allow selecting shapes, lines, and images
+        if (shapes.some(s => s.id === name) || lines.some(l => l.id === name) || images.some(i => i.id === name)) {
           setSelectedId(name);
         }
       }
@@ -374,6 +499,7 @@ export default function App() {
     if (drawingLineId || drawingShapeId) {
       setLastStrokeId(drawingLineId || drawingShapeId);
       setTimeout(() => setLastStrokeId(null), 1200);
+      saveHistory(); // Save after finished drawing
     }
     setDrawingLineId(null);
     setDrawingShapeId(null);
@@ -414,7 +540,10 @@ export default function App() {
       updateState(setShapes, shapes, 'shape-updated');
     } else if (lines.some(l => l.id === node.id())) {
       updateState(setLines, lines, 'line-updated');
+    } else if (images.some(i => i.id === node.id())) {
+      updateState(setImages, images, 'image-updated');
     }
+    saveHistory(); // Save after transformation
   };
 
 
@@ -548,6 +677,14 @@ export default function App() {
                 shadowColor={lastStrokeId === line.id ? line.color : 'transparent'}
                 shadowBlur={lastStrokeId === line.id ? 40 : 0}
                 opacity={lastStrokeId === line.id ? 1 : 0.9}
+              />
+            ))}
+            {images.map((img) => (
+              <URLImage
+                key={img.id}
+                image={img}
+                tool={tool}
+                onTransform={handleTransformEnd}
               />
             ))}
             {shapes.map((s) => {
