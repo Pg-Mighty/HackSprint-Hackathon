@@ -12,8 +12,19 @@ const socketUrl = 'http://localhost:8080/whiteboard-sockets';
 const tools = [
   { id: 'select', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3l3.057 14.943L12 12l5 5 2-2-5-5 5.057-3.943z" /></svg> },
   { id: 'pen', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg> },
+  { id: 'eraser', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L20 20Z" /><path d="M6 11L13 18" /></svg> },
   { id: 'rect', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /></svg> },
   { id: 'circle', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /></svg> }
+];
+
+const palette = [
+  { name: 'Ink', color: '#1a1a1a' },
+  { name: 'Slate', color: '#64748b' },
+  { name: 'Manifest', color: '#5d5dff' },
+  { name: 'Teal', color: '#0d9488' },
+  { name: 'Forest', color: '#16a34a' },
+  { name: 'Ember', color: '#ea580c' },
+  { name: 'Rose', color: '#dc2626' }
 ];
 
 const createStompClient = ({ onConnect, onDisconnect }) =>
@@ -61,6 +72,7 @@ export default function App() {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [startTime] = useState(Date.now());
   const [elapsed, setElapsed] = useState('00:00');
+  const [showAdvancedPicker, setShowAdvancedPicker] = useState(false);
 
   const linesRef = useRef(lines);
   const shapesRef = useRef(shapes);
@@ -81,6 +93,33 @@ export default function App() {
     return () => clearInterval(interval);
   }, [startTime]);
 
+  // STOMP Logic & Destinations
+  const roomDestinations = useMemo(() => {
+    if (!roomId) return null;
+    return { appBase: `/app/rooms/${roomId}`, topicBase: `/topic/rooms/${roomId}` };
+  }, [roomId]);
+
+  const publishRoomEvent = useCallback((destination, payload) => {
+    if (!roomDestinations || !stompRef.current?.connected) return;
+    stompRef.current.publish({
+      destination: `${roomDestinations.appBase}/${destination}`,
+      body: JSON.stringify({ ...payload, roomId })
+    });
+  }, [roomDestinations, roomId, stompRef.current?.connected]);
+
+  const removeElement = useCallback((id) => {
+    setLines(prev => {
+      const filtered = prev.filter(l => l.id !== id);
+      if (filtered.length !== prev.length) publishRoomEvent('line-removed', { id });
+      return filtered;
+    });
+    setShapes(prev => {
+      const filtered = prev.filter(s => s.id !== id);
+      if (filtered.length !== prev.length) publishRoomEvent('shape-removed', { id });
+      return filtered;
+    });
+  }, [publishRoomEvent]);
+
   // UI Visibility & Idle Logic
   const resetUiTimer = useCallback(() => {
     setUiVisible(true);
@@ -99,21 +138,29 @@ export default function App() {
 
   useEffect(() => {
     const handleGlobalActivity = (e) => {
-      setMousePos({ x: e.clientX, y: e.clientY });
+      if (e.clientX && e.clientY) setMousePos({ x: e.clientX, y: e.clientY });
       resetUiTimer();
     };
+    const handleKeyDown = (e) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+        removeElement(selectedId);
+        setSelectedId(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('mousemove', handleGlobalActivity);
     window.addEventListener('mousedown', handleGlobalActivity);
     window.addEventListener('touchstart', handleGlobalActivity);
     resetUiTimer();
     return () => {
+      window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('mousemove', handleGlobalActivity);
       window.removeEventListener('mousedown', handleGlobalActivity);
       window.removeEventListener('touchstart', handleGlobalActivity);
       if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     };
-  }, [resetUiTimer]);
+  }, [resetUiTimer, selectedId, removeElement]);
 
   // Magnet Drag Style
   const driftStyle = useMemo(() => {
@@ -131,12 +178,6 @@ export default function App() {
     const offsetX = (mousePos.x - centerX) * 0.03;
     return { left: `calc(50% + ${offsetX}px)`, transform: 'translateX(-50%)' };
   }, [mousePos.x, mousePos.y, tbPos, isTbDragging]);
-
-  // STOMP Logic
-  const roomDestinations = useMemo(() => {
-    if (!roomId) return null;
-    return { appBase: `/app/rooms/${roomId}`, topicBase: `/topic/rooms/${roomId}` };
-  }, [roomId]);
 
   const connectToRoom = () => {
     if (!roomDestinations) return;
@@ -156,6 +197,11 @@ export default function App() {
           if (inc) setLines(prev => prev.map(l => (l.id === inc.id ? inc : l)));
         });
 
+        client.subscribe(`${topicBase}/line-removed`, (m) => {
+          const inc = safeParse(m);
+          if (inc?.id) setLines(prev => prev.filter(l => l.id !== inc.id));
+        });
+
         client.subscribe(`${topicBase}/shape-created`, (m) => {
           const inc = safeParse(m);
           if (inc) setShapes(prev => prev.some(s => s.id === inc.id) ? prev : [...prev, inc]);
@@ -164,6 +210,11 @@ export default function App() {
         client.subscribe(`${topicBase}/shape-updated`, (m) => {
           const inc = safeParse(m);
           if (inc) setShapes(prev => prev.map(s => (s.id === inc.id ? inc : s)));
+        });
+
+        client.subscribe(`${topicBase}/shape-removed`, (m) => {
+          const inc = safeParse(m);
+          if (inc?.id) setShapes(prev => prev.filter(s => s.id !== inc.id));
         });
 
         client.subscribe(`${topicBase}/cursor-updated`, (m) => {
@@ -199,14 +250,6 @@ export default function App() {
 
     stompRef.current = client;
     client.activate();
-  };
-
-  const publishRoomEvent = (destination, payload) => {
-    if (!roomDestinations || !stompRef.current?.connected) return;
-    stompRef.current.publish({
-      destination: `${roomDestinations.appBase}/${destination}`,
-      body: JSON.stringify({ ...payload, roomId })
-    });
   };
 
   const joinRoom = () => {
@@ -246,10 +289,17 @@ export default function App() {
         setSelectedId(null);
       } else {
         const name = e.target.name();
-        // Only select if it's one of our shapes, not a Transformer anchor
-        if (shapes.some(s => s.id === name)) {
+        // Allow selecting both shapes and lines
+        if (shapes.some(s => s.id === name) || lines.some(l => l.id === name)) {
           setSelectedId(name);
         }
+      }
+      return;
+    }
+
+    if (tool === 'eraser') {
+      if (!clickedOnEmpty) {
+        removeElement(e.target.name() || e.target.id());
       }
       return;
     }
@@ -343,20 +393,30 @@ export default function App() {
 
   const handleTransformEnd = (e) => {
     const node = e.target;
-    setShapes(prev => {
-      const next = prev.map(s => s.id !== node.id() ? s : {
-        ...s,
-        x: node.x(),
-        y: node.y(),
-        scaleX: node.scaleX(),
-        scaleY: node.scaleY(),
-        rotation: node.rotation()
+    const updateState = (setter, list, eventName) => {
+      setter(prev => {
+        const next = prev.map(item => item.id !== node.id() ? item : {
+          ...item,
+          x: node.x(),
+          y: node.y(),
+          scaleX: node.scaleX(),
+          scaleY: node.scaleY(),
+          rotation: node.rotation()
+        });
+        const updated = next.find(i => i.id === node.id());
+        if (updated) publishRoomEvent(eventName, updated);
+        return next;
       });
-      const updated = next.find(s => s.id === node.id());
-      if (updated) publishRoomEvent('shape-updated', updated);
-      return next;
-    });
+    };
+
+    if (shapes.some(s => s.id === node.id())) {
+      updateState(setShapes, shapes, 'shape-updated');
+    } else if (lines.some(l => l.id === node.id())) {
+      updateState(setLines, lines, 'line-updated');
+    }
   };
+
+
 
   useEffect(() => {
     if (selectedId && transformerRef.current) {
@@ -398,11 +458,23 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div className="tool-group">
-          <input type="color" value={strokeColor} onChange={(e) => setStrokeColor(e.target.value)} disabled={!joined} />
-          <label>
+        <div className="tool-group palette">
+          {palette.map(p => (
+            <div
+              key={p.color}
+              className={`ink-dot ${strokeColor === p.color ? 'active' : ''}`}
+              style={{ '--dot-color': p.color }}
+              onClick={() => { setStrokeColor(p.color); setShowAdvancedPicker(false); }}
+              title={p.name}
+            />
+          ))}
+          <div className="advanced-trigger" onClick={() => setShowAdvancedPicker(!showAdvancedPicker)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+            {showAdvancedPicker && <input type="color" value={strokeColor} onChange={(e) => setStrokeColor(e.target.value)} autoFocus onBlur={() => setShowAdvancedPicker(false)} />}
+          </div>
+          <div className="width-adjuster">
             <input type="range" min="1" max="15" value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))} disabled={!joined} />
-          </label>
+          </div>
           <button className="settings-toggle" onClick={() => setDarkMode(!darkMode)} title="Theme">
             {darkMode ? (
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></svg>
@@ -427,7 +499,7 @@ export default function App() {
           ref={stageRef}
           width={stageSize.width}
           height={stageSize.height}
-          className="stage"
+          className={`stage cursor-${tool}`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -441,12 +513,23 @@ export default function App() {
             {lines.map((line) => (
               <Line
                 key={line.id}
+                id={line.id}
+                name={line.id}
                 points={line.points}
                 stroke={line.color}
                 strokeWidth={line.strokeWidth}
+                hitStrokeWidth={20}
                 tension={0.5}
                 lineCap="round"
                 lineJoin="round"
+                draggable={tool === 'select'}
+                onTransformEnd={handleTransformEnd}
+                onDragEnd={handleTransformEnd}
+                x={line.x || 0}
+                y={line.y || 0}
+                scaleX={line.scaleX || 1}
+                scaleY={line.scaleY || 1}
+                rotation={line.rotation || 0}
                 shadowColor={lastStrokeId === line.id ? line.color : 'transparent'}
                 shadowBlur={lastStrokeId === line.id ? 40 : 0}
                 opacity={lastStrokeId === line.id ? 1 : 0.9}
