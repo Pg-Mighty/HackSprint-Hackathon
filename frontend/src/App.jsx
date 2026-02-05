@@ -32,9 +32,8 @@ const tools = [
 const palette = [
   { name: 'Ink', color: '#1a1a1a' },
   { name: 'Slate', color: '#64748b' },
-  { name: 'Manifest', color: '#5d5dff' },
+  { name: 'Session', color: '#5d5dff' },
   { name: 'Teal', color: '#0d9488' },
-  { name: 'Forest', color: '#16a34a' },
   { name: 'Ember', color: '#ea580c' },
   { name: 'Rose', color: '#dc2626' }
 ];
@@ -166,6 +165,12 @@ const safeParse = (message) => {
   try { return JSON.parse(message.body); } catch (e) { return null; }
 };
 
+const getAdaptiveColor = (color, darkMode) => {
+  if (color === '#1a1a1a' && darkMode) return '#f0f0f0';
+  if (color === '#f0f0f0' && !darkMode) return '#1a1a1a';
+  return color;
+};
+
 export default function App() {
   const stageRef = useRef(null);
   const transformerRef = useRef(null);
@@ -174,6 +179,14 @@ export default function App() {
 
   const [roomId, setRoomId] = useState('');
   const [joined, setJoined] = useState(false);
+
+  // Load room from URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const r = params.get('room');
+    if (r) setRoomId(r);
+  }, []);
+
   const [tool, setTool] = useState('pen');
   const [strokeColor, setStrokeColor] = useState(DEFAULT_COLOR);
   const [strokeWidth, setStrokeWidth] = useState(3);
@@ -195,11 +208,17 @@ export default function App() {
   const [uiVisible, setUiVisible] = useState(true);
   const [radialMenu, setRadialMenu] = useState({ visible: false, x: 0, y: 0 });
   const [lastStrokeId, setLastStrokeId] = useState(null);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [tbPos, setTbPos] = useState('bottom');
   const [isTbDragging, setIsTbDragging] = useState(false);
   const [isIdle, setIsIdle] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+
+  // Sync Theme
+  useEffect(() => {
+    localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+    document.body.style.backgroundColor = darkMode ? '#0c0c0e' : '#faf9f6';
+  }, [darkMode]);
   const [startTime] = useState(Date.now());
   const [elapsed, setElapsed] = useState('00:00');
   const [showAdvancedPicker, setShowAdvancedPicker] = useState(false);
@@ -754,7 +773,7 @@ export default function App() {
         const target = prev.find(t => t.id === id);
         if (!target) return prev;
 
-        // Remove empty manifests
+        // Remove empty texts
         if (target.isNew && !value.trim()) {
           const next = prev.filter(t => t.id !== id);
           publishRoomEvent('text-removed', { id });
@@ -785,7 +804,24 @@ export default function App() {
         </div>
         <div className="room-controls">
           <input type="text" placeholder="Summon ID" value={roomId} onChange={(e) => setRoomId(e.target.value)} disabled={joined} />
-          {!joined && <button onClick={joinRoom}>Manifest</button>}
+          {!joined && <button onClick={joinRoom}>create session</button>}
+          {joined && (
+            <button
+              onClick={() => {
+                const url = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
+                navigator.clipboard.writeText(url);
+                const btn = document.activeElement;
+                if (btn) {
+                  const oldText = btn.innerText;
+                  btn.innerText = 'Copied!';
+                  setTimeout(() => btn.innerText = oldText, 2000);
+                }
+              }}
+              style={{ background: 'rgba(93, 93, 255, 0.15)', color: 'var(--accent-color)', border: '1px solid var(--accent-color)' }}
+            >
+              Copy Link
+            </button>
+          )}
         </div>
       </header>
 
@@ -808,7 +844,7 @@ export default function App() {
             <div
               key={p.color}
               className={`ink-dot ${strokeColor === p.color ? 'active' : ''}`}
-              style={{ '--dot-color': p.color }}
+              style={{ '--dot-color': getAdaptiveColor(p.color, darkMode) }}
               onClick={() => { setStrokeColor(p.color); setShowAdvancedPicker(false); }}
               title={p.name}
             />
@@ -875,7 +911,7 @@ export default function App() {
                 id={line.id}
                 name={line.id}
                 points={line.points}
-                stroke={line.color}
+                stroke={getAdaptiveColor(line.color, darkMode)}
                 strokeWidth={line.strokeWidth}
                 hitStrokeWidth={20}
                 tension={0.5}
@@ -906,7 +942,7 @@ export default function App() {
               editingText?.id === t.id ? null : (
                 <DynamicText
                   key={t.id}
-                  text={t}
+                  text={{ ...t, color: getAdaptiveColor(t.color, darkMode) }}
                   tool={tool}
                   onSelect={handleTextSelect}
                   onTransform={handleTransformEnd}
@@ -914,9 +950,10 @@ export default function App() {
               )
             ))}
             {shapes.map((s) => {
-              const cp = { id: s.id, name: s.id, key: s.id, stroke: s.color, strokeWidth: 2, strokeScaleEnabled: false, shadowColor: lastStrokeId === s.id ? s.color : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
+              const adaptiveColor = getAdaptiveColor(s.color, darkMode);
+              const cp = { id: s.id, name: s.id, key: s.id, stroke: adaptiveColor, strokeWidth: 2, strokeScaleEnabled: false, shadowColor: lastStrokeId === s.id ? adaptiveColor : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
               return s.type === 'rect' ? (
-                <Rect {...cp} x={s.x} y={s.y} width={s.width} height={s.height} />
+                <Rect {...cp} x={s.x} y={s.y} width={s.width} height={s.height} cornerRadius={2} />
               ) : (
                 <Circle {...cp} x={s.x} y={s.y} radius={s.radius} />
               );
@@ -947,7 +984,7 @@ export default function App() {
             ))}
           </Layer>
         </Stage>
-        {!joined && <div className="overlay"><p>Move your cursor to manifest the surface.</p></div>}
+        {!joined && <div className="overlay"><p>Move your cursor to start a session.</p></div>}
       </main>
 
       {editingText && (
