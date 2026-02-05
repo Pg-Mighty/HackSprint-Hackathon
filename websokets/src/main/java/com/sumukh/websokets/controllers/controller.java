@@ -1,23 +1,23 @@
 package com.sumukh.websokets.controllers;
 
-import com.sumukh.websokets.tupples.CursorPosition;
-import com.sumukh.websokets.tupples.DrawingData;
+import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.handler.annotation.SendTo;
+import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.stereotype.Controller;
+import org.springframework.beans.factory.annotation.Autowired;
+import java.util.Map;
 
-public class controller  {
+@Controller
+public class controller {
 
-    @MessageMapping("/draw")
-    @SendTo("/topic/draw")
-    public DrawingData handleDrawingData(DrawingData drawingData) {
-        return drawingData;
+    @Autowired
+    private SimpMessagingTemplate template;
+
+    @MessageMapping("/rooms/{roomId}/{event}")
+    public void handleRoomEvent(@DestinationVariable String roomId, @DestinationVariable String event, @Payload Map<String, Object> payload) {
+        // Broadcasts to /topic/rooms/{roomId}/{event}
+        // Example: /topic/rooms/123/line-created
+        template.convertAndSend("/topic/rooms/" + roomId + "/" + event, (Object) payload);
     }
-
-    @MessageMapping("/cursor")
-    @SendTo("/topic/cursor")
-    public CursorPosition handleCursorPosition(CursorPosition pos){
-        return pos;
-
-    }
-
 }

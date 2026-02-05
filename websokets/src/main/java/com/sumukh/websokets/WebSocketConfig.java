@@ -13,7 +13,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
 
-        registry.addEndpoint("/whiteboard-sockets").setAllowedOrigins("*").withSockJS();
+        registry.addEndpoint("/whiteboard-sockets").setAllowedOriginPatterns("*").withSockJS();
     }
 
 

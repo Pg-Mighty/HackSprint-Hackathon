@@ -18,7 +18,7 @@ const useImage = (src) => {
   return [img];
 };
 
-const socketUrl = 'http://localhost:8080/whiteboard-sockets';
+const socketUrl = `http://${window.location.hostname}:8080/whiteboard-sockets`;
 
 const tools = [
   { id: 'select', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3l3.057 14.943L12 12l5 5 2-2-5-5 5.057-3.943z" /></svg> },
@@ -184,7 +184,11 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const r = params.get('room');
-    if (r) setRoomId(r);
+    if (r) {
+      setRoomId(r);
+      // Delayed join to ensure function availability
+      setTimeout(() => joinRoom(r), 100);
+    }
   }, []);
 
   const [tool, setTool] = useState('pen');
@@ -257,12 +261,17 @@ export default function App() {
   }, [roomId]);
 
   const publishRoomEvent = useCallback((destination, payload) => {
-    if (!roomDestinations || !stompRef.current?.connected) return;
-    stompRef.current.publish({
-      destination: `${roomDestinations.appBase}/${destination}`,
-      body: JSON.stringify({ ...payload, roomId })
-    });
-  }, [roomDestinations, roomId, stompRef.current?.connected]);
+    // Dynamically check roomId to ensure we publish to the active room
+    if (!roomId) return;
+    const destBase = `/app/rooms/${roomId}`;
+
+    if (stompRef.current?.connected) {
+      stompRef.current.publish({
+        destination: `${destBase}/${destination}`,
+        body: JSON.stringify({ ...payload, roomId })
+      });
+    }
+  }, [roomId, stompRef.current?.connected]);
 
   const removeElement = useCallback((id) => {
     setLines(prev => {
@@ -520,13 +529,18 @@ export default function App() {
     return { left: `calc(50% + ${offsetX}px)`, transform: 'translateX(-50%)' };
   }, [mousePos.x, mousePos.y, tbPos, isTbDragging]);
 
-  const connectToRoom = () => {
-    if (!roomDestinations) return;
+  const connectToRoom = (targetRoomId) => {
+    const rId = targetRoomId || roomId;
+    if (!rId) return;
+
+    // Recalculate destinations locally since state might lag
+    const dest = { appBase: `/app/rooms/${rId}`, topicBase: `/topic/rooms/${rId}` };
+
     stompRef.current?.deactivate();
 
     const client = createStompClient({
       onConnect: () => {
-        const { topicBase, appBase } = roomDestinations;
+        const { topicBase, appBase } = dest;
 
         client.subscribe(`${topicBase}/line-created`, (m) => {
           const inc = safeParse(m);
@@ -606,7 +620,11 @@ export default function App() {
           if (inc?.texts) setTexts(inc.texts);
         });
 
-        client.subscribe(`${topicBase}/request-state`, () => {
+        client.subscribe(`${topicBase}/request-state`, (m) => {
+          const payload = safeParse(m);
+          // Don't respond to my own request (prevents wiping state with my empty board)
+          if (!payload || payload.requesterId === clientIdRef.current) return;
+
           client.publish({
             destination: `${appBase}/state-sync`,
             body: JSON.stringify({
@@ -626,15 +644,22 @@ export default function App() {
       },
       onDisconnect: () => setCursors({})
     });
-
     stompRef.current = client;
     client.activate();
   };
 
-  const joinRoom = () => {
-    if (!roomId.trim()) return;
+  const joinRoom = (arg) => {
+    // If called from button click, arg is Event. If called programmatically, it's string or null.
+    let target = (typeof arg === 'string') ? arg : roomId;
+
+    // Auto-generate ID if empty
+    if (!target || !target.trim()) {
+      target = buildId();
+    }
+
+    setRoomId(target);
     setJoined(true);
-    connectToRoom();
+    connectToRoom(target);
   };
 
   const handleDragStart = (e) => {
@@ -928,15 +953,38 @@ export default function App() {
           {!joined && <button onClick={joinRoom}>create session</button>}
           {joined && (
             <button
-              onClick={() => {
+              onClick={(e) => {
                 const url = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
-                navigator.clipboard.writeText(url);
-                const btn = document.activeElement;
-                if (btn) {
+                const btn = e.currentTarget;
+
+                const copyToClipboard = (text) => {
+                  if (navigator.clipboard && window.isSecureContext) {
+                    return navigator.clipboard.writeText(text);
+                  } else {
+                    // Fallback for insecure contexts (HTTP)
+                    const textArea = document.createElement("textarea");
+                    textArea.value = text;
+                    textArea.style.position = "fixed";
+                    textArea.style.left = "-9999px";
+                    textArea.style.top = "0";
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    return new Promise((resolve, reject) => {
+                      document.execCommand('copy') ? resolve() : reject();
+                      textArea.remove();
+                    });
+                  }
+                };
+
+                copyToClipboard(url).then(() => {
                   const oldText = btn.innerText;
                   btn.innerText = 'Copied!';
                   setTimeout(() => btn.innerText = oldText, 2000);
-                }
+                }).catch(() => {
+                  btn.innerText = 'Failed';
+                  setTimeout(() => btn.innerText = 'Copy Link', 2000);
+                });
               }}
               style={{ background: 'rgba(93, 93, 255, 0.15)', color: 'var(--accent-color)', border: '1px solid var(--accent-color)' }}
             >
