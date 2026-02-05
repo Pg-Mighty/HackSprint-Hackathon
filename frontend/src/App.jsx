@@ -1,19 +1,19 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
-import { Circle, Layer, Rect, Stage, Line, Text } from 'react-konva';
+import { Circle, Layer, Rect, Stage, Line, Group, Transformer } from 'react-konva';
 
-const DEFAULT_COLOR = '#2563eb';
+const DEFAULT_COLOR = '#5d5dff';
 
 const buildId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-//const socketUrl = import.meta.env.VITE_SOCKJS_URL || `${window.location.origin}/whiteboard-sockets`;
 const socketUrl = 'http://localhost:8080/whiteboard-sockets';
 
 const tools = [
-  { id: 'pen', label: 'Pen' },
-  { id: 'rect', label: 'Rect' },
-  { id: 'circle', label: 'Circle' }
+  { id: 'select', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3l3.057 14.943L12 12l5 5 2-2-5-5 5.057-3.943z" /></svg> },
+  { id: 'pen', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg> },
+  { id: 'rect', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /></svg> },
+  { id: 'circle', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /></svg> }
 ];
 
 const createStompClient = ({ onConnect, onDisconnect }) =>
@@ -25,20 +25,16 @@ const createStompClient = ({ onConnect, onDisconnect }) =>
   });
 
 const safeParse = (message) => {
-  if (!message?.body) {
-    return null;
-  }
-  try {
-    return JSON.parse(message.body);
-  } catch (error) {
-    return null;
-  }
+  if (!message?.body) return null;
+  try { return JSON.parse(message.body); } catch (e) { return null; }
 };
 
 export default function App() {
   const stageRef = useRef(null);
+  const transformerRef = useRef(null);
   const stompRef = useRef(null);
   const clientIdRef = useRef(buildId());
+
   const [roomId, setRoomId] = useState('');
   const [joined, setJoined] = useState(false);
   const [tool, setTool] = useState('pen');
@@ -47,150 +43,140 @@ export default function App() {
   const [lines, setLines] = useState([]);
   const [shapes, setShapes] = useState([]);
   const [cursors, setCursors] = useState({});
-  const [stageSize, setStageSize] = useState({
-    width: window.innerWidth,
-    height: window.innerHeight - 120
-  });
+  const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+
   const [drawingLineId, setDrawingLineId] = useState(null);
   const [drawingShapeId, setDrawingShapeId] = useState(null);
   const [shapeStart, setShapeStart] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+
+  // Interaction & UI States
+  const [uiVisible, setUiVisible] = useState(true);
+  const [radialMenu, setRadialMenu] = useState({ visible: false, x: 0, y: 0 });
+  const [lastStrokeId, setLastStrokeId] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
+  const [tbPos, setTbPos] = useState('bottom');
+  const [isTbDragging, setIsTbDragging] = useState(false);
+  const [isIdle, setIsIdle] = useState(false);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [startTime] = useState(Date.now());
+  const [elapsed, setElapsed] = useState('00:00');
 
   const linesRef = useRef(lines);
   const shapesRef = useRef(shapes);
+  const uiTimerRef = useRef(null);
+  const idleTimerRef = useRef(null);
+
+  useEffect(() => { linesRef.current = lines; }, [lines]);
+  useEffect(() => { shapesRef.current = shapes; }, [shapes]);
+
+  // Session timer
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const diff = Math.floor((Date.now() - startTime) / 1000);
+      const mins = String(Math.floor(diff / 60)).padStart(2, '0');
+      const secs = String(diff % 60).padStart(2, '0');
+      setElapsed(`${mins}:${secs}`);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [startTime]);
+
+  // UI Visibility & Idle Logic
+  const resetUiTimer = useCallback(() => {
+    setUiVisible(true);
+    setIsIdle(false);
+    if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+
+    uiTimerRef.current = setTimeout(() => {
+      if (!drawingLineId && !drawingShapeId) setUiVisible(false);
+    }, 4000);
+
+    idleTimerRef.current = setTimeout(() => {
+      setIsIdle(true);
+    }, 10000);
+  }, [drawingLineId, drawingShapeId]);
 
   useEffect(() => {
-    linesRef.current = lines;
-  }, [lines]);
-
-  useEffect(() => {
-    shapesRef.current = shapes;
-  }, [shapes]);
-
-  useEffect(() => {
-    const updateSize = () => {
-      setStageSize({
-        width: window.innerWidth,
-        height: window.innerHeight - 120
-      });
+    const handleGlobalActivity = (e) => {
+      setMousePos({ x: e.clientX, y: e.clientY });
+      resetUiTimer();
     };
-    window.addEventListener('resize', updateSize);
-    return () => window.removeEventListener('resize', updateSize);
-  }, []);
+    window.addEventListener('mousemove', handleGlobalActivity);
+    window.addEventListener('mousedown', handleGlobalActivity);
+    window.addEventListener('touchstart', handleGlobalActivity);
+    resetUiTimer();
+    return () => {
+      window.removeEventListener('mousemove', handleGlobalActivity);
+      window.removeEventListener('mousedown', handleGlobalActivity);
+      window.removeEventListener('touchstart', handleGlobalActivity);
+      if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    };
+  }, [resetUiTimer]);
 
+  // Drift Calculation
+  const driftStyle = useMemo(() => {
+    if (tbPos !== 'bottom') return {};
+    const centerX = window.innerWidth / 2;
+    const offsetX = (mousePos.x - centerX) * 0.03;
+    return { left: `calc(50% + ${offsetX}px)`, transform: 'translateX(-50%)' };
+  }, [mousePos.x, tbPos]);
+
+  // STOMP Logic
   const roomDestinations = useMemo(() => {
-    if (!roomId) {
-      return null;
-    }
-    return {
-      appBase: `/app/rooms/${roomId}`,
-      topicBase: `/topic/rooms/${roomId}`
-    };
+    if (!roomId) return null;
+    return { appBase: `/app/rooms/${roomId}`, topicBase: `/topic/rooms/${roomId}` };
   }, [roomId]);
 
-  useEffect(() => {
-    return () => {
-      stompRef.current?.deactivate();
-    };
-  }, []);
-
   const connectToRoom = () => {
-    if (!roomDestinations) {
-      return;
-    }
-
+    if (!roomDestinations) return;
     stompRef.current?.deactivate();
 
     const client = createStompClient({
       onConnect: () => {
         const { topicBase, appBase } = roomDestinations;
 
-        client.subscribe(`${topicBase}/line-created`, (message) => {
-          const incoming = safeParse(message);
-          if (!incoming) {
-            return;
-          }
-          setLines((prev) => {
-            if (prev.some((line) => line.id === incoming.id)) {
-              return prev;
-            }
-            return [...prev, incoming];
-          });
+        client.subscribe(`${topicBase}/line-created`, (m) => {
+          const inc = safeParse(m);
+          if (inc) setLines(prev => prev.some(l => l.id === inc.id) ? prev : [...prev, inc]);
         });
 
-        client.subscribe(`${topicBase}/line-updated`, (message) => {
-          const incoming = safeParse(message);
-          if (!incoming) {
-            return;
-          }
-          setLines((prev) =>
-            prev.map((line) => (line.id === incoming.id ? incoming : line))
-          );
+        client.subscribe(`${topicBase}/line-updated`, (m) => {
+          const inc = safeParse(m);
+          if (inc) setLines(prev => prev.map(l => (l.id === inc.id ? inc : l)));
         });
 
-        client.subscribe(`${topicBase}/shape-created`, (message) => {
-          const incoming = safeParse(message);
-          if (!incoming) {
-            return;
-          }
-          setShapes((prev) => {
-            if (prev.some((shape) => shape.id === incoming.id)) {
-              return prev;
-            }
-            return [...prev, incoming];
-          });
+        client.subscribe(`${topicBase}/shape-created`, (m) => {
+          const inc = safeParse(m);
+          if (inc) setShapes(prev => prev.some(s => s.id === inc.id) ? prev : [...prev, inc]);
         });
 
-        client.subscribe(`${topicBase}/shape-updated`, (message) => {
-          const incoming = safeParse(message);
-          if (!incoming) {
-            return;
-          }
-          setShapes((prev) =>
-            prev.map((shape) => (shape.id === incoming.id ? incoming : shape))
-          );
+        client.subscribe(`${topicBase}/shape-updated`, (m) => {
+          const inc = safeParse(m);
+          if (inc) setShapes(prev => prev.map(s => (s.id === inc.id ? inc : s)));
         });
 
-        client.subscribe(`${topicBase}/cursor-updated`, (message) => {
-          const incoming = safeParse(message);
-          if (!incoming) {
-            return;
-          }
-          setCursors((prev) => ({ ...prev, [incoming.id]: incoming }));
+        client.subscribe(`${topicBase}/cursor-updated`, (m) => {
+          const inc = safeParse(m);
+          if (inc) setCursors(prev => ({ ...prev, [inc.id]: inc }));
         });
 
-        client.subscribe(`${topicBase}/cursor-left`, (message) => {
-          const incoming = safeParse(message);
-          if (!incoming?.id) {
-            return;
-          }
-          setCursors((prev) => {
-            const next = { ...prev };
-            delete next[incoming.id];
-            return next;
-          });
+        client.subscribe(`${topicBase}/cursor-left`, (m) => {
+          const inc = safeParse(m);
+          if (inc?.id) setCursors(prev => { const n = { ...prev }; delete n[inc.id]; return n; });
         });
 
-        client.subscribe(`${topicBase}/state-sync`, (message) => {
-          const incoming = safeParse(message);
-          if (incoming?.lines) {
-            setLines(incoming.lines);
-          }
-          if (incoming?.shapes) {
-            setShapes(incoming.shapes);
-          }
+        client.subscribe(`${topicBase}/state-sync`, (m) => {
+          const inc = safeParse(m);
+          if (inc?.lines) setLines(inc.lines);
+          if (inc?.shapes) setShapes(inc.shapes);
         });
 
-        client.subscribe(`${topicBase}/request-state`, (message) => {
-          if (!message) {
-            return;
-          }
+        client.subscribe(`${topicBase}/request-state`, () => {
           client.publish({
             destination: `${appBase}/state-sync`,
-            body: JSON.stringify({
-              roomId,
-              lines: linesRef.current,
-              shapes: shapesRef.current
-            })
+            body: JSON.stringify({ roomId, lines: linesRef.current, shapes: shapesRef.current })
           });
         });
 
@@ -199,244 +185,224 @@ export default function App() {
           body: JSON.stringify({ roomId, requesterId: clientIdRef.current })
         });
       },
-      onDisconnect: () => {
-        setCursors({});
-      }
+      onDisconnect: () => setCursors({})
     });
 
     stompRef.current = client;
     client.activate();
   };
 
-  const joinRoom = () => {
-    if (!roomId.trim()) {
-      return;
-    }
-    setJoined(true);
-    connectToRoom();
-  };
-
   const publishRoomEvent = (destination, payload) => {
-    if (!roomDestinations) {
-      return;
-    }
-    const client = stompRef.current;
-    if (!client || !client.connected) {
-      return;
-    }
-    client.publish({
+    if (!roomDestinations || !stompRef.current?.connected) return;
+    stompRef.current.publish({
       destination: `${roomDestinations.appBase}/${destination}`,
       body: JSON.stringify({ ...payload, roomId })
     });
   };
 
-  const handleMouseDown = () => {
-    if (!joined) {
+  const joinRoom = () => {
+    if (!roomId.trim()) return;
+    setJoined(true);
+    connectToRoom();
+  };
+
+  const handleDragStart = (e) => {
+    e.preventDefault();
+    setIsTbDragging(true);
+    const onMove = (me) => {
+      if (me.clientX < 240) setTbPos('left');
+      else setTbPos('bottom');
+    };
+    const onUp = () => {
+      setIsTbDragging(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  useEffect(() => {
+    const updateSize = () => setStageSize({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
+
+  const handleMouseDown = (e) => {
+    if (!joined || (e.evt && e.evt.button !== 0)) return;
+    if (radialMenu.visible) { setRadialMenu({ visible: false, x: 0, y: 0 }); return; }
+
+    const clickedOnEmpty = e.target === e.target.getStage();
+    if (clickedOnEmpty) setSelectedId(null);
+    if (tool === 'select') {
+      if (!clickedOnEmpty) setSelectedId(e.target.id());
       return;
     }
+
     const stage = stageRef.current;
-    const pointerPosition = stage.getPointerPosition();
-    if (!pointerPosition) {
-      return;
-    }
+    const pointer = stage.getPointerPosition();
+    const pos = { x: (pointer.x - stage.x()) / stage.scaleX(), y: (pointer.y - stage.y()) / stage.scaleY() };
 
     if (tool === 'pen') {
-      const line = {
-        id: buildId(),
-        points: [pointerPosition.x, pointerPosition.y],
-        color: strokeColor,
-        strokeWidth
-      };
-      setLines((prev) => [...prev, line]);
+      const line = { id: buildId(), points: [pos.x, pos.y], color: strokeColor, strokeWidth };
+      setLines(p => [...p, line]);
       setDrawingLineId(line.id);
       publishRoomEvent('line-created', line);
-    }
-
-    if (tool === 'rect' || tool === 'circle') {
-      const shape = {
-        id: buildId(),
-        type: tool,
-        x: pointerPosition.x,
-        y: pointerPosition.y,
-        width: 0,
-        height: 0,
-        radius: 0,
-        color: strokeColor
-      };
-      setShapes((prev) => [...prev, shape]);
+    } else if (tool === 'rect') {
+      const shape = { id: buildId(), type: 'rect', x: pos.x, y: pos.y, width: 0, height: 0, color: strokeColor, scaleX: 1, scaleY: 1, rotation: 0 };
+      setShapes(p => [...p, shape]);
       setDrawingShapeId(shape.id);
-      setShapeStart(pointerPosition);
+      setShapeStart(pos);
+      publishRoomEvent('shape-created', shape);
+    } else if (tool === 'circle') {
+      const shape = { id: buildId(), type: 'circle', x: pos.x, y: pos.y, radius: 0, color: strokeColor, scaleX: 1, scaleY: 1, rotation: 0 };
+      setShapes(p => [...p, shape]);
+      setDrawingShapeId(shape.id);
+      setShapeStart(pos);
       publishRoomEvent('shape-created', shape);
     }
   };
 
   const handleMouseMove = () => {
-    if (!joined) {
-      return;
-    }
+    if (!joined) return;
     const stage = stageRef.current;
-    const pointerPosition = stage.getPointerPosition();
-    if (!pointerPosition) {
-      return;
-    }
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
+    const pos = { x: (pointer.x - stage.x()) / stage.scaleX(), y: (pointer.y - stage.y()) / stage.scaleY() };
 
-    publishRoomEvent('cursor-updated', {
-      id: clientIdRef.current,
-      x: pointerPosition.x,
-      y: pointerPosition.y,
-      color: strokeColor
-    });
+    publishRoomEvent('cursor-updated', { id: clientIdRef.current, x: pos.x, y: pos.y, color: strokeColor });
 
     if (tool === 'pen' && drawingLineId) {
-      setLines((prev) => {
-        const next = prev.map((line) => {
-          if (line.id !== drawingLineId) {
-            return line;
-          }
-          const updatedLine = {
-            ...line,
-            points: [...line.points, pointerPosition.x, pointerPosition.y]
-          };
-          publishRoomEvent('line-updated', updatedLine);
-          return updatedLine;
-        });
-        return next;
-      });
-    }
-
-    if ((tool === 'rect' || tool === 'circle') && drawingShapeId && shapeStart) {
-      setShapes((prev) =>
-        prev.map((shape) => {
-          if (shape.id !== drawingShapeId) {
-            return shape;
-          }
-          const nextX = Math.min(shapeStart.x, pointerPosition.x);
-          const nextY = Math.min(shapeStart.y, pointerPosition.y);
-          const width = Math.abs(pointerPosition.x - shapeStart.x);
-          const height = Math.abs(pointerPosition.y - shapeStart.y);
-          const radius = Math.max(width, height) / 2;
-          const updated = {
+      setLines((prev) => prev.map((line) => {
+        if (line.id !== drawingLineId) return line;
+        const updated = { ...line, points: [...line.points, pos.x, pos.y] };
+        publishRoomEvent('line-updated', updated);
+        return updated;
+      }));
+    } else if (drawingShapeId && shapeStart) {
+      setShapes((prev) => prev.map((shape) => {
+        if (shape.id !== drawingShapeId) return shape;
+        if (shape.type === 'rect') {
+          return {
             ...shape,
-            x: nextX,
-            y: nextY,
-            width,
-            height,
-            radius
+            x: Math.min(shapeStart.x, pos.x), y: Math.min(shapeStart.y, pos.y),
+            width: Math.abs(pos.x - shapeStart.x), height: Math.abs(pos.y - shapeStart.y)
           };
-          publishRoomEvent('shape-updated', updated);
-          return updated;
-        })
-      );
+        } else {
+          // Circle: calculate radius from start to current
+          const radius = Math.sqrt(Math.pow(pos.x - shapeStart.x, 2) + Math.pow(pos.y - shapeStart.y, 2));
+          return { ...shape, radius };
+        }
+      }));
+      const updated = shapesRef.current.find(s => s.id === drawingShapeId);
+      if (updated) publishRoomEvent('shape-updated', updated);
     }
   };
 
   const handleMouseUp = () => {
+    if (drawingLineId || drawingShapeId) {
+      setLastStrokeId(drawingLineId || drawingShapeId);
+      setTimeout(() => setLastStrokeId(null), 1200);
+    }
     setDrawingLineId(null);
     setDrawingShapeId(null);
     setShapeStart(null);
   };
 
+  const handleWheel = (e) => {
+    e.evt.preventDefault();
+    const stage = stageRef.current;
+    const oldScale = stage.scaleX();
+    const pointer = stage.getPointerPosition();
+    const mousePointTo = { x: (pointer.x - stage.x()) / oldScale, y: (pointer.y - stage.y()) / oldScale };
+    const speed = 0.05;
+    const newScale = e.evt.deltaY > 0 ? oldScale / (1 + speed) : oldScale * (1 + speed);
+    stage.scale({ x: newScale, y: newScale });
+    stage.position({ x: pointer.x - mousePointTo.x * newScale, y: pointer.y - mousePointTo.y * newScale });
+  };
+
+  const handleTransformEnd = (e) => {
+    const node = e.target;
+    setShapes(prev => {
+      const next = prev.map(s => s.id !== node.id() ? s : {
+        ...s,
+        x: node.x(),
+        y: node.y(),
+        scaleX: node.scaleX(),
+        scaleY: node.scaleY(),
+        rotation: node.rotation()
+      });
+      const updated = next.find(s => s.id === node.id());
+      if (updated) publishRoomEvent('shape-updated', updated);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (selectedId && transformerRef.current) {
+      const selectedNode = stageRef.current.findOne('#' + selectedId);
+      transformerRef.current.nodes(selectedNode ? [selectedNode] : []);
+      transformerRef.current.getLayer().batchDraw();
+    }
+  }, [selectedId]);
+
   const handleMouseLeave = () => {
     publishRoomEvent('cursor-left', { id: clientIdRef.current });
   };
 
-  const downloadPNG = () => {
-    const stage = stageRef.current;
-    if (!stage) {
-      return;
-    }
-    const dataUrl = stage.toDataURL({ pixelRatio: 2 });
-    const link = document.createElement('a');
-    link.download = `whiteboard-${roomId || 'session'}.png`;
-    link.href = dataUrl;
-    link.click();
-  };
-
-  const downloadJSON = () => {
-    const data = {
-      roomId,
-      lines,
-      shapes
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: 'application/json'
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.download = `whiteboard-${roomId || 'session'}.json`;
-    link.href = url;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
-    <div className="app">
-      <header className="top-bar">
+    <div className={`app ${darkMode ? 'dark' : ''} ${isIdle ? 'idle' : ''}`} onContextMenu={(e) => { e.preventDefault(); const p = stageRef.current.getPointerPosition(); if (p) setRadialMenu({ visible: true, x: p.x, y: p.y }); }}>
+      <header className={`ui-atom top-bar ${(!uiVisible || !!drawingLineId || !!drawingShapeId) ? 'hidden' : ''}`}>
         <div className="brand">
-          <h1>Realtime Whiteboard</h1>
-          <p>Transient session • No server persistence</p>
+          <div className="pulse-dot" />
+          <h1 style={{ color: 'var(--ink-color)' }}>Radical Board</h1>
+          <div className="session-info" style={{ color: 'var(--accent-color)' }}>Live for {elapsed} <span className="ephemerality-tag">· Not saved</span></div>
         </div>
         <div className="room-controls">
-          <input
-            type="text"
-            placeholder="Room ID"
-            value={roomId}
-            onChange={(event) => setRoomId(event.target.value)}
-            disabled={joined}
-          />
-          <button type="button" onClick={joinRoom} disabled={joined}>
-            {joined ? 'Joined' : 'Join'}
-          </button>
+          <input type="text" placeholder="Summon ID" value={roomId} onChange={(e) => setRoomId(e.target.value)} disabled={joined} />
+          {!joined && <button onClick={joinRoom}>Manifest</button>}
         </div>
       </header>
 
-      <section className="toolbar">
+      <div
+        className={`ui-atom toolbar position-${tbPos} ${(!uiVisible || !!drawingLineId || !!drawingShapeId) && !isTbDragging ? 'hidden' : ''}`}
+        style={driftStyle}
+      >
+        <div className="drag-handle" onMouseDown={handleDragStart}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="9" cy="5" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="9" cy="19" r="1.5" /><circle cx="15" cy="5" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="15" cy="19" r="1.5" /></svg>
+        </div>
         <div className="tool-group">
-          {tools.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={tool === item.id ? 'active' : ''}
-              onClick={() => setTool(item.id)}
-              disabled={!joined}
-            >
-              {item.label}
+          {tools.map(t => (
+            <button key={t.id} className={tool === t.id ? 'active' : ''} onClick={() => { setTool(t.id); if (t.id !== 'select') setSelectedId(null); }} title={t.id}>
+              {t.icon}
             </button>
           ))}
         </div>
         <div className="tool-group">
+          <input type="color" value={strokeColor} onChange={(e) => setStrokeColor(e.target.value)} disabled={!joined} />
           <label>
-            Color
-            <input
-              type="color"
-              value={strokeColor}
-              onChange={(event) => setStrokeColor(event.target.value)}
-              disabled={!joined}
-            />
+            <input type="range" min="1" max="15" value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))} disabled={!joined} />
           </label>
-          <label>
-            Width
-            <input
-              type="range"
-              min="1"
-              max="12"
-              value={strokeWidth}
-              onChange={(event) => setStrokeWidth(Number(event.target.value))}
-              disabled={!joined}
-            />
-          </label>
-        </div>
-        <div className="tool-group">
-          <button type="button" onClick={downloadPNG} disabled={!joined}>
-            Export PNG
-          </button>
-          <button type="button" onClick={downloadJSON} disabled={!joined}>
-            Export JSON
+          <button className="settings-toggle" onClick={() => setDarkMode(!darkMode)} title="Theme">
+            {darkMode ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
+            )}
           </button>
         </div>
-      </section>
+      </div>
 
-      <section className="board">
+      {radialMenu.visible && (
+        <div className="radial-menu" style={{ left: radialMenu.x, top: radialMenu.y }}>
+          {tools.map((t, i) => {
+            const angle = (i / tools.length) * 2 * Math.PI - Math.PI / 2;
+            return <div key={t.id} className="radial-item" style={{ transform: `translate(${Math.cos(angle) * 75 - 26}px, ${Math.sin(angle) * 75 - 26}px)` }} onClick={() => { setTool(t.id); if (t.id !== 'select') setSelectedId(null); setRadialMenu({ visible: false, x: 0, y: 0 }); }}>{t.icon}</div>;
+          })}
+        </div>
+      )}
+
+      <main className="board">
         <Stage
           ref={stageRef}
           width={stageSize.width}
@@ -445,6 +411,7 @@ export default function App() {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
+          onWheel={handleWheel}
           onMouseLeave={handleMouseLeave}
           onTouchStart={handleMouseDown}
           onTouchMove={handleMouseMove}
@@ -460,52 +427,42 @@ export default function App() {
                 tension={0.5}
                 lineCap="round"
                 lineJoin="round"
+                shadowColor={lastStrokeId === line.id ? line.color : 'transparent'}
+                shadowBlur={lastStrokeId === line.id ? 40 : 0}
+                opacity={lastStrokeId === line.id ? 1 : 0.9}
               />
             ))}
-            {shapes.map((shape) =>
-              shape.type === 'rect' ? (
-                <Rect
-                  key={shape.id}
-                  x={shape.x}
-                  y={shape.y}
-                  width={shape.width}
-                  height={shape.height}
-                  stroke={shape.color}
-                  strokeWidth={2}
-                />
+            {shapes.map((s) => {
+              const cp = { id: s.id, key: s.id, stroke: s.color, strokeWidth: 2, shadowColor: lastStrokeId === s.id ? s.color : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
+              return s.type === 'rect' ? (
+                <Rect {...cp} x={s.x} y={s.y} width={s.width} height={s.height} />
               ) : (
-                <Circle
-                  key={shape.id}
-                  x={shape.x + shape.radius}
-                  y={shape.y + shape.radius}
-                  radius={shape.radius}
-                  stroke={shape.color}
-                  strokeWidth={2}
-                />
-              )
+                <Circle {...cp} x={s.x} y={s.y} radius={s.radius} />
+              );
+            })}
+            {selectedId && (
+              <Transformer
+                ref={transformerRef}
+                rotateEnabled={true}
+                flipEnabled={false}
+                borderStroke="#5d5dff"
+                borderDash={[4, 4]}
+                anchorFill="#fff"
+                anchorStroke="#5d5dff"
+                anchorCornerRadius={3}
+              />
             )}
-            {Object.values(cursors)
-              .filter((cursor) => cursor.id !== clientIdRef.current)
-              .map((cursor) => (
-                <React.Fragment key={cursor.id}>
-                  <Circle x={cursor.x} y={cursor.y} radius={4} fill={cursor.color} />
-                  <Text
-                    text={cursor.id.slice(0, 4)}
-                    x={cursor.x + 8}
-                    y={cursor.y + 6}
-                    fontSize={12}
-                    fill={cursor.color}
-                  />
-                </React.Fragment>
-              ))}
+            {Object.values(cursors).filter(c => c.id !== clientIdRef.current).map((c) => (
+              <Group key={c.id}>
+                <Circle x={c.x} y={c.y} radius={14} fill={c.color} opacity={0.08} />
+                <Circle x={c.x} y={c.y} radius={8} fill={c.color} opacity={0.18} />
+                <Circle x={c.x} y={c.y} radius={4} fill={c.color} />
+              </Group>
+            ))}
           </Layer>
         </Stage>
-        {!joined && (
-          <div className="overlay">
-            <p>Enter a Room ID to start collaborating.</p>
-          </div>
-        )}
-      </section>
+        {!joined && <div className="overlay"><p>Move your cursor to manifest the surface.</p></div>}
+      </main>
     </div>
   );
 }
