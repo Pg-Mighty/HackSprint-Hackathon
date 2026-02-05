@@ -32,9 +32,8 @@ const tools = [
 const palette = [
   { name: 'Ink', color: '#1a1a1a' },
   { name: 'Slate', color: '#64748b' },
-  { name: 'Manifest', color: '#5d5dff' },
+  { name: 'Session', color: '#5d5dff' },
   { name: 'Teal', color: '#0d9488' },
-  { name: 'Forest', color: '#16a34a' },
   { name: 'Ember', color: '#ea580c' },
   { name: 'Rose', color: '#dc2626' }
 ];
@@ -166,6 +165,12 @@ const safeParse = (message) => {
   try { return JSON.parse(message.body); } catch (e) { return null; }
 };
 
+const getAdaptiveColor = (color, darkMode) => {
+  if (color === '#1a1a1a' && darkMode) return '#f0f0f0';
+  if (color === '#f0f0f0' && !darkMode) return '#1a1a1a';
+  return color;
+};
+
 export default function App() {
   const stageRef = useRef(null);
   const transformerRef = useRef(null);
@@ -174,6 +179,14 @@ export default function App() {
 
   const [roomId, setRoomId] = useState('');
   const [joined, setJoined] = useState(false);
+
+  // Load room from URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const r = params.get('room');
+    if (r) setRoomId(r);
+  }, []);
+
   const [tool, setTool] = useState('pen');
   const [strokeColor, setStrokeColor] = useState(DEFAULT_COLOR);
   const [strokeWidth, setStrokeWidth] = useState(3);
@@ -195,15 +208,23 @@ export default function App() {
   const [uiVisible, setUiVisible] = useState(true);
   const [radialMenu, setRadialMenu] = useState({ visible: false, x: 0, y: 0 });
   const [lastStrokeId, setLastStrokeId] = useState(null);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [tbPos, setTbPos] = useState('bottom');
   const [isTbDragging, setIsTbDragging] = useState(false);
   const [isIdle, setIsIdle] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+
+  // Sync Theme
+  useEffect(() => {
+    localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+    document.body.style.backgroundColor = darkMode ? '#0c0c0e' : '#faf9f6';
+  }, [darkMode]);
   const [startTime] = useState(Date.now());
   const [elapsed, setElapsed] = useState('00:00');
   const [showAdvancedPicker, setShowAdvancedPicker] = useState(false);
   const [editingText, setEditingText] = useState(null); // { id, x, y, value, color }
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef(null);
   const colorInputRef = useRef(null);
 
   const linesRef = useRef(lines);
@@ -381,7 +402,106 @@ export default function App() {
       if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     };
-  }, [resetUiTimer, selectedId, removeElement, undo, redo]);
+  }, [resetUiTimer, selectedId, removeElement, undo, redo, exportMenuOpen]);
+
+  // Click outside export menu
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
+        setExportMenuOpen(false);
+      }
+    };
+    if (exportMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [exportMenuOpen]);
+
+  const handleExportPNG = () => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const dataURL = stage.toDataURL({ pixelRatio: 2 });
+    const link = document.createElement('a');
+    link.download = `radical-board-${Date.now()}.png`;
+    link.href = dataURL;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setExportMenuOpen(false);
+  };
+
+  const handleExportJSON = () => {
+    const state = {
+      lines: linesRef.current,
+      shapes: shapesRef.current,
+      images: imagesRef.current,
+      texts: textsRef.current
+    };
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.download = `radical-board-${Date.now()}.json`;
+    link.href = url;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setExportMenuOpen(false);
+  };
+
+  const handleExportSVG = () => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const width = stage.width();
+    const height = stage.height();
+    const bg = darkMode ? '#0c0c0e' : '#faf9f6';
+
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`;
+    svg += `<rect width="100%" height="100%" fill="${bg}" />`;
+
+    // Lines
+    linesRef.current.forEach(l => {
+      const points = l.points.join(' ');
+      const color = getAdaptiveColor(l.color, darkMode);
+      svg += `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="${l.strokeWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="0.9" />`;
+    });
+
+    // Shapes
+    shapesRef.current.forEach(s => {
+      const color = getAdaptiveColor(s.color, darkMode);
+      if (s.type === 'rect') {
+        svg += `<rect x="${s.x}" y="${s.y}" width="${s.width}" height="${s.height}" fill="none" stroke="${color}" stroke-width="2" rx="2" />`;
+      } else if (s.type === 'circle') {
+        svg += `<circle cx="${s.x}" y="${s.y}" r="${s.radius}" fill="none" stroke="${color}" stroke-width="2" />`;
+      }
+    });
+
+    // Images
+    imagesRef.current.forEach(img => {
+      svg += `<image href="${img.src}" x="${img.x}" y="${img.y}" width="${img.width}" height="${img.height}" transform="rotate(${img.rotation || 0}, ${img.x + (img.width / 2)}, ${img.y + (img.height / 2)}) scale(${img.scaleX || 1}, ${img.scaleY || 1})" />`;
+    });
+
+    // Texts
+    textsRef.current.forEach(t => {
+      if (t.isNew) return;
+      const color = getAdaptiveColor(t.color, darkMode);
+      svg += `<text x="${t.x}" y="${t.y + 20}" fill="${color}" font-family="Outfit, sans-serif" font-size="22">${t.content}</text>`;
+    });
+
+    svg += '</svg>';
+
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.download = `radical-board-${Date.now()}.svg`;
+    link.href = url;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setExportMenuOpen(false);
+  };
 
   // Magnet Drag Style
   const driftStyle = useMemo(() => {
@@ -754,7 +874,7 @@ export default function App() {
         const target = prev.find(t => t.id === id);
         if (!target) return prev;
 
-        // Remove empty manifests
+        // Remove empty texts
         if (target.isNew && !value.trim()) {
           const next = prev.filter(t => t.id !== id);
           publishRoomEvent('text-removed', { id });
@@ -778,6 +898,26 @@ export default function App() {
   return (
     <div className={`app ${darkMode ? 'dark' : ''} ${isIdle ? 'idle' : ''}`} onContextMenu={(e) => { e.preventDefault(); const p = stageRef.current.getPointerPosition(); if (p) setRadialMenu({ visible: true, x: p.x, y: p.y }); }}>
       <header className={`ui-atom top-bar ${(!uiVisible || !!drawingLineId || !!drawingShapeId) ? 'hidden' : ''}`}>
+        <div ref={exportMenuRef} className="menu-trigger" onClick={() => setExportMenuOpen(!exportMenuOpen)}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" /></svg>
+          {exportMenuOpen && (
+            <div className="export-menu">
+              <button onClick={handleExportPNG}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+                Export PNG
+              </button>
+              <button onClick={handleExportSVG}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+                Export SVG
+              </button>
+              <div className="divider" />
+              <button onClick={handleExportJSON}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>
+                Save JSON
+              </button>
+            </div>
+          )}
+        </div>
         <div className="brand">
           <div className="pulse-dot" />
           <h1 style={{ color: 'var(--ink-color)' }}>Radical Board</h1>
@@ -785,7 +925,24 @@ export default function App() {
         </div>
         <div className="room-controls">
           <input type="text" placeholder="Summon ID" value={roomId} onChange={(e) => setRoomId(e.target.value)} disabled={joined} />
-          {!joined && <button onClick={joinRoom}>Manifest</button>}
+          {!joined && <button onClick={joinRoom}>create session</button>}
+          {joined && (
+            <button
+              onClick={() => {
+                const url = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
+                navigator.clipboard.writeText(url);
+                const btn = document.activeElement;
+                if (btn) {
+                  const oldText = btn.innerText;
+                  btn.innerText = 'Copied!';
+                  setTimeout(() => btn.innerText = oldText, 2000);
+                }
+              }}
+              style={{ background: 'rgba(93, 93, 255, 0.15)', color: 'var(--accent-color)', border: '1px solid var(--accent-color)' }}
+            >
+              Copy Link
+            </button>
+          )}
         </div>
       </header>
 
@@ -808,7 +965,7 @@ export default function App() {
             <div
               key={p.color}
               className={`ink-dot ${strokeColor === p.color ? 'active' : ''}`}
-              style={{ '--dot-color': p.color }}
+              style={{ '--dot-color': getAdaptiveColor(p.color, darkMode) }}
               onClick={() => { setStrokeColor(p.color); setShowAdvancedPicker(false); }}
               title={p.name}
             />
@@ -875,7 +1032,7 @@ export default function App() {
                 id={line.id}
                 name={line.id}
                 points={line.points}
-                stroke={line.color}
+                stroke={getAdaptiveColor(line.color, darkMode)}
                 strokeWidth={line.strokeWidth}
                 hitStrokeWidth={20}
                 tension={0.5}
@@ -906,7 +1063,7 @@ export default function App() {
               editingText?.id === t.id ? null : (
                 <DynamicText
                   key={t.id}
-                  text={t}
+                  text={{ ...t, color: getAdaptiveColor(t.color, darkMode) }}
                   tool={tool}
                   onSelect={handleTextSelect}
                   onTransform={handleTransformEnd}
@@ -914,9 +1071,10 @@ export default function App() {
               )
             ))}
             {shapes.map((s) => {
-              const cp = { id: s.id, name: s.id, key: s.id, stroke: s.color, strokeWidth: 2, strokeScaleEnabled: false, shadowColor: lastStrokeId === s.id ? s.color : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
+              const adaptiveColor = getAdaptiveColor(s.color, darkMode);
+              const cp = { id: s.id, name: s.id, key: s.id, stroke: adaptiveColor, strokeWidth: 2, strokeScaleEnabled: false, shadowColor: lastStrokeId === s.id ? adaptiveColor : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
               return s.type === 'rect' ? (
-                <Rect {...cp} x={s.x} y={s.y} width={s.width} height={s.height} />
+                <Rect {...cp} x={s.x} y={s.y} width={s.width} height={s.height} cornerRadius={2} />
               ) : (
                 <Circle {...cp} x={s.x} y={s.y} radius={s.radius} />
               );
@@ -947,7 +1105,7 @@ export default function App() {
             ))}
           </Layer>
         </Stage>
-        {!joined && <div className="overlay"><p>Move your cursor to manifest the surface.</p></div>}
+        {!joined && <div className="overlay"><p>Move your cursor to start a session.</p></div>}
       </main>
 
       {editingText && (
