@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
-import { Circle, Layer, Rect, Stage, Line, Group, Transformer, Image } from 'react-konva';
+import { Circle, Layer, Rect, Stage, Line, Group, Transformer, Image, Text } from 'react-konva';
 
 const DEFAULT_COLOR = '#5d5dff';
 
@@ -25,7 +25,8 @@ const tools = [
   { id: 'pen', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg> },
   { id: 'eraser', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L20 20Z" /><path d="M6 11L13 18" /></svg> },
   { id: 'rect', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /></svg> },
-  { id: 'circle', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /></svg> }
+  { id: 'circle', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /></svg> },
+  { id: 'text', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg> }
 ];
 
 const palette = [
@@ -37,6 +38,99 @@ const palette = [
   { name: 'Ember', color: '#ea580c' },
   { name: 'Rose', color: '#dc2626' }
 ];
+
+const DynamicText = ({ text, onSelect, onTransform, tool }) => {
+  return (
+    <Text
+      id={text.id}
+      name={text.id}
+      x={text.x}
+      y={text.y}
+      text={text.content || (text.isNew ? '' : 'Click to reveal')}
+      fontSize={22}
+      fontFamily="Outfit, sans-serif"
+      fill={text.color}
+      draggable={tool === 'select'}
+      onDblClick={() => onSelect(text.id, true)}
+      onClick={() => onSelect(text.id)}
+      onTransformEnd={onTransform}
+      onDragEnd={onTransform}
+      scaleX={text.scaleX || 1}
+      scaleY={text.scaleY || 1}
+      rotation={text.rotation || 0}
+    />
+  );
+};
+
+const TextEditor = ({ text, onBlur, onChange }) => {
+  const ref = useRef(null);
+  const mirrorRef = useRef(null);
+  const [size, setSize] = useState({ w: 100, h: 40 });
+
+  useLayoutEffect(() => {
+    if (mirrorRef.current) {
+      const w = mirrorRef.current.clientWidth + 20;
+      const h = mirrorRef.current.clientHeight + 10;
+      // Buffer the size change to avoid rapid flickers
+      setSize(prev => (Math.abs(prev.w - w) > 2 || Math.abs(prev.h - h) > 2) ? { w, h } : prev);
+    }
+  }, [text.value]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => ref.current?.focus(), 50);
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <>
+      <div
+        ref={mirrorRef}
+        style={{
+          position: 'fixed',
+          visibility: 'hidden',
+          whiteSpace: 'pre-wrap',
+          fontFamily: 'Outfit, sans-serif',
+          fontSize: '22px',
+          lineHeight: 1.2,
+          padding: 0,
+          pointerEvents: 'none',
+          maxWidth: '80vw'
+        }}
+      >
+        {text.value + (text.value.endsWith('\n') ? ' ' : '') || ' '}
+      </div>
+      <textarea
+        ref={ref}
+        value={text.value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
+        style={{
+          position: 'fixed',
+          left: text.x,
+          top: text.y,
+          width: size.w,
+          height: size.h,
+          color: text.color,
+          fontSize: '22px',
+          fontFamily: 'Outfit, sans-serif',
+          transform: `scale(${text.scaleX || 1}, ${text.scaleY || 1})`,
+          transformOrigin: 'top left',
+          background: 'transparent',
+          border: 'none',
+          outline: 'none',
+          padding: 0,
+          margin: 0,
+          resize: 'none',
+          overflow: 'hidden',
+          lineHeight: 1.2,
+          whiteSpace: 'pre-wrap',
+          zIndex: 10000,
+          boxShadow: 'none'
+        }}
+      />
+    </>
+  );
+};
 
 const URLImage = ({ image, onTransform, tool }) => {
   const [img] = useImage(image.src);
@@ -86,8 +180,9 @@ export default function App() {
   const [lines, setLines] = useState([]);
   const [shapes, setShapes] = useState([]);
   const [images, setImages] = useState([]);
+  const [texts, setTexts] = useState([]);
   const [cursors, setCursors] = useState({});
-  const [history, setHistory] = useState([{ lines: [], shapes: [], images: [] }]);
+  const [history, setHistory] = useState([{ lines: [], shapes: [], images: [], texts: [] }]);
   const [historyStep, setHistoryStep] = useState(0);
   const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
 
@@ -108,17 +203,20 @@ export default function App() {
   const [startTime] = useState(Date.now());
   const [elapsed, setElapsed] = useState('00:00');
   const [showAdvancedPicker, setShowAdvancedPicker] = useState(false);
+  const [editingText, setEditingText] = useState(null); // { id, x, y, value, color }
   const colorInputRef = useRef(null);
 
   const linesRef = useRef(lines);
   const shapesRef = useRef(shapes);
   const imagesRef = useRef(images);
+  const textsRef = useRef(texts);
   const uiTimerRef = useRef(null);
   const idleTimerRef = useRef(null);
 
   useEffect(() => { linesRef.current = lines; }, [lines]);
   useEffect(() => { shapesRef.current = shapes; }, [shapes]);
   useEffect(() => { imagesRef.current = images; }, [images]);
+  useEffect(() => { textsRef.current = texts; }, [texts]);
 
   // Session timer
   useEffect(() => {
@@ -161,11 +259,21 @@ export default function App() {
       if (filtered.length !== prev.length) publishRoomEvent('image-removed', { id });
       return filtered;
     });
+    setTexts(prev => {
+      const filtered = prev.filter(t => t.id !== id);
+      if (filtered.length !== prev.length) publishRoomEvent('text-removed', { id });
+      return filtered;
+    });
     saveHistory();
   }, [publishRoomEvent]);
 
-  const saveHistory = useCallback(() => {
-    const newState = { lines: linesRef.current, shapes: shapesRef.current, images: imagesRef.current };
+  const saveHistory = useCallback((explicitState = null) => {
+    const newState = explicitState || {
+      lines: linesRef.current,
+      shapes: shapesRef.current,
+      images: imagesRef.current,
+      texts: textsRef.current
+    };
     setHistory(prev => {
       const newHistory = prev.slice(0, historyStep + 1);
       return [...newHistory, newState];
@@ -180,8 +288,9 @@ export default function App() {
     setLines(prevState.lines);
     setShapes(prevState.shapes);
     setImages(prevState.images);
+    setTexts(prevState.texts || []);
     setHistoryStep(newStep);
-    publishRoomEvent('state-sync', { lines: prevState.lines, shapes: prevState.shapes, images: prevState.images });
+    publishRoomEvent('state-sync', { lines: prevState.lines, shapes: prevState.shapes, images: prevState.images, texts: prevState.texts });
   }, [history, historyStep, publishRoomEvent]);
 
   const redo = useCallback(() => {
@@ -191,8 +300,9 @@ export default function App() {
     setLines(nextState.lines);
     setShapes(nextState.shapes);
     setImages(nextState.images);
+    setTexts(nextState.texts || []);
     setHistoryStep(newStep);
-    publishRoomEvent('state-sync', { lines: nextState.lines, shapes: nextState.shapes, images: nextState.images });
+    publishRoomEvent('state-sync', { lines: nextState.lines, shapes: nextState.shapes, images: nextState.images, texts: nextState.texts });
   }, [history, historyStep, publishRoomEvent]);
 
   // UI Visibility & Idle Logic
@@ -217,6 +327,7 @@ export default function App() {
       resetUiTimer();
     };
     const handleKeyDown = (e) => {
+      if (editingText) return; // Prevent deletion while editing text
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         removeElement(selectedId);
         setSelectedId(null);
@@ -352,17 +463,39 @@ export default function App() {
           if (inc?.id) setImages(prev => prev.filter(i => i.id !== inc.id));
         });
 
+        client.subscribe(`${topicBase}/text-created`, (m) => {
+          const inc = safeParse(m);
+          if (inc) setTexts(prev => prev.some(t => t.id === inc.id) ? prev : [...prev, inc]);
+        });
+
+        client.subscribe(`${topicBase}/text-updated`, (m) => {
+          const inc = safeParse(m);
+          if (inc) setTexts(prev => prev.map(t => (t.id === inc.id ? inc : t)));
+        });
+
+        client.subscribe(`${topicBase}/text-removed`, (m) => {
+          const inc = safeParse(m);
+          if (inc?.id) setTexts(prev => prev.filter(t => t.id !== inc.id));
+        });
+
         client.subscribe(`${topicBase}/state-sync`, (m) => {
           const inc = safeParse(m);
           if (inc?.lines) setLines(inc.lines);
           if (inc?.shapes) setShapes(inc.shapes);
           if (inc?.images) setImages(inc.images);
+          if (inc?.texts) setTexts(inc.texts);
         });
 
         client.subscribe(`${topicBase}/request-state`, () => {
           client.publish({
             destination: `${appBase}/state-sync`,
-            body: JSON.stringify({ roomId, lines: linesRef.current, shapes: shapesRef.current, images: imagesRef.current })
+            body: JSON.stringify({
+              roomId,
+              lines: linesRef.current,
+              shapes: shapesRef.current,
+              images: imagesRef.current,
+              texts: textsRef.current
+            })
           });
         });
 
@@ -408,6 +541,10 @@ export default function App() {
   }, []);
 
   const handleMouseDown = (e) => {
+    if (editingText) {
+      commitText();
+      return;
+    }
     const clickedOnEmpty = e.target === e.target.getStage();
 
     if (tool === 'select') {
@@ -415,8 +552,8 @@ export default function App() {
         setSelectedId(null);
       } else {
         const name = e.target.name();
-        // Allow selecting shapes, lines, and images
-        if (shapes.some(s => s.id === name) || lines.some(l => l.id === name) || images.some(i => i.id === name)) {
+        // Allow selecting shapes, lines, images, and texts
+        if (shapes.some(s => s.id === name) || lines.some(l => l.id === name) || images.some(i => i.id === name) || texts.some(t => t.id === name)) {
           setSelectedId(name);
         }
       }
@@ -456,6 +593,18 @@ export default function App() {
       setDrawingShapeId(shape.id);
       setShapeStart(pos);
       publishRoomEvent('shape-created', shape);
+    } else if (tool === 'text') {
+      const textObj = { id: buildId(), content: '', x: pos.x, y: pos.y, color: strokeColor, isNew: true, scaleX: 1, scaleY: 1, rotation: 0 };
+      setTexts(p => [...p, textObj]);
+      publishRoomEvent('text-created', textObj);
+
+      // Trigger editor immediately
+      const stage = stageRef.current;
+      const container = stage.container().getBoundingClientRect();
+      const pointer = stage.getPointerPosition();
+      const screenX = pointer.x + container.left;
+      const screenY = pointer.y + container.top;
+      setEditingText({ id: textObj.id, x: screenX, y: screenY, value: '', color: strokeColor, scale: stage.scaleX() });
     }
   };
 
@@ -532,6 +681,20 @@ export default function App() {
         });
         const updated = next.find(i => i.id === node.id());
         if (updated) publishRoomEvent(eventName, updated);
+
+        // Manual Ref sync for history stability
+        if (setter === setLines) linesRef.current = next;
+        else if (setter === setShapes) shapesRef.current = next;
+        else if (setter === setImages) imagesRef.current = next;
+        else if (setter === setTexts) textsRef.current = next;
+
+        const finalState = {
+          lines: linesRef.current,
+          shapes: shapesRef.current,
+          images: imagesRef.current,
+          texts: textsRef.current
+        };
+        saveHistory(finalState);
         return next;
       });
     };
@@ -542,8 +705,9 @@ export default function App() {
       updateState(setLines, lines, 'line-updated');
     } else if (images.some(i => i.id === node.id())) {
       updateState(setImages, images, 'image-updated');
+    } else if (texts.some(t => t.id === node.id())) {
+      updateState(setTexts, texts, 'text-updated');
     }
-    saveHistory(); // Save after transformation
   };
 
 
@@ -559,6 +723,57 @@ export default function App() {
   const handleMouseLeave = () => {
     publishRoomEvent('cursor-left', { id: clientIdRef.current });
   };
+
+  const handleTextSelect = (id, forceEdit = false) => {
+    setSelectedId(id);
+    if (forceEdit) {
+      const stage = stageRef.current;
+      const node = stage.findOne('#' + id);
+      if (node) {
+        const t = textsRef.current.find(tx => tx.id === id);
+        const container = stage.container().getBoundingClientRect();
+        const absPos = node.getAbsolutePosition();
+        setEditingText({
+          id,
+          x: absPos.x + container.left,
+          y: absPos.y + container.top,
+          value: t.content,
+          color: t.color,
+          scaleX: stage.scaleX() * (t.scaleX || 1),
+          scaleY: stage.scaleY() * (t.scaleY || 1)
+        });
+      }
+    }
+  };
+
+  const commitText = useCallback(() => {
+    setEditingText((current) => {
+      if (!current) return null;
+      const { id, value } = current;
+      setTexts(prev => {
+        const target = prev.find(t => t.id === id);
+        if (!target) return prev;
+
+        // Remove empty manifests
+        if (target.isNew && !value.trim()) {
+          const next = prev.filter(t => t.id !== id);
+          publishRoomEvent('text-removed', { id });
+          textsRef.current = next;
+          saveHistory({ lines: linesRef.current, shapes: shapesRef.current, images: imagesRef.current, texts: next });
+          return next;
+        }
+
+        const next = prev.map(t => t.id === id ? { ...t, content: value, isNew: false } : t);
+        const updated = next.find(t => t.id === id);
+        if (updated) publishRoomEvent('text-updated', updated);
+
+        textsRef.current = next;
+        saveHistory({ lines: linesRef.current, shapes: shapesRef.current, images: imagesRef.current, texts: next });
+        return next;
+      });
+      return null;
+    });
+  }, [publishRoomEvent, saveHistory]);
 
   return (
     <div className={`app ${darkMode ? 'dark' : ''} ${isIdle ? 'idle' : ''}`} onContextMenu={(e) => { e.preventDefault(); const p = stageRef.current.getPointerPosition(); if (p) setRadialMenu({ visible: true, x: p.x, y: p.y }); }}>
@@ -687,6 +902,17 @@ export default function App() {
                 onTransform={handleTransformEnd}
               />
             ))}
+            {texts.map((t) => (
+              editingText?.id === t.id ? null : (
+                <DynamicText
+                  key={t.id}
+                  text={t}
+                  tool={tool}
+                  onSelect={handleTextSelect}
+                  onTransform={handleTransformEnd}
+                />
+              )
+            ))}
             {shapes.map((s) => {
               const cp = { id: s.id, name: s.id, key: s.id, stroke: s.color, strokeWidth: 2, strokeScaleEnabled: false, shadowColor: lastStrokeId === s.id ? s.color : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
               return s.type === 'rect' ? (
@@ -723,6 +949,14 @@ export default function App() {
         </Stage>
         {!joined && <div className="overlay"><p>Move your cursor to manifest the surface.</p></div>}
       </main>
+
+      {editingText && (
+        <TextEditor
+          text={editingText}
+          onChange={(val) => setEditingText(prev => ({ ...prev, value: val }))}
+          onBlur={commitText}
+        />
+      )}
     </div>
   );
 }
