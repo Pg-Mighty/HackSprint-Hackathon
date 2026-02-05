@@ -1,0 +1,131 @@
+:root {
+  color: #0f172a;
+  background-color: #f8fafc;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background: white;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.top-bar h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.top-bar p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.room-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.room-controls input {
+  padding: 8px 12px;
+  border: 1px solid #cbd5f5;
+  border-radius: 8px;
+}
+
+.room-controls button {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+}
+
+.room-controls button:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 24px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.tool-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tool-group button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #cbd5f5;
+  background: white;
+  cursor: pointer;
+}
+
+.tool-group button.active {
+  border-color: #2563eb;
+  background: #dbeafe;
+}
+
+.tool-group label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  color: #475569;
+}
+
+.tool-group input[type='range'] {
+  accent-color: #2563eb;
+}
+
+.board {
+  position: relative;
+  flex: 1;
+}
+
+.stage {
+  background: #f8fafc;
+  cursor: crosshair;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 250, 252, 0.85);
+  font-size: 18px;
+  color: #475569;
+}
+
+button:disabled,
+input:disabled {
+  opacity: 0.7;
+}
