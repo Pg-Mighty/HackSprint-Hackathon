@@ -171,11 +171,17 @@ const getAdaptiveColor = (color, darkMode) => {
   return color;
 };
 
+const isMobileDevice = () => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
+};
+
 export default function App() {
   const stageRef = useRef(null);
   const transformerRef = useRef(null);
   const stompRef = useRef(null);
   const clientIdRef = useRef(buildId());
+  const [isMobile] = useState(isMobileDevice());
 
   const [roomId, setRoomId] = useState('');
   const [joined, setJoined] = useState(false);
@@ -712,7 +718,11 @@ export default function App() {
       return;
     }
 
-    if (!joined || (e.evt && e.evt.button !== 0)) return;
+    if (!joined) return;
+
+    // For touch events, evt might not exist or button might be undefined
+    if (e.evt && e.evt.button !== undefined && e.evt.button !== 0) return;
+
     if (radialMenu.visible) { setRadialMenu({ visible: false, x: 0, y: 0 }); return; }
 
     if (clickedOnEmpty) setSelectedId(null);
@@ -753,7 +763,7 @@ export default function App() {
     }
   };
 
-  const handleMouseMove = () => {
+  const handleMouseMove = (e) => {
     if (!joined) return;
     const stage = stageRef.current;
     const pointer = stage.getPointerPosition();

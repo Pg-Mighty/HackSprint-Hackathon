@@ -98,19 +98,31 @@
 :root {
   font-family: 'Plus Jakarta Sans', sans-serif;
   color: var(--ink-color);
-  background-color: var(--bg-color);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
-  box-sizing: border-box;
   margin: 0;
   padding: 0;
-  transition: background-color 0.5s var(--inertia), color 0.5s var(--inertia);
+  box-sizing: border-box;
 }
 
 body {
+  margin: 0;
   overflow: hidden;
-  background-color: var(--bg-color);
+  background: var(--bg-color);
+  transition: background 0.3s var(--inertia);
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+canvas {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .app {
@@ -701,4 +713,200 @@ input[type='range']:hover::-webkit-slider-thumb {
 
 input[type='range']:active::-webkit-slider-thumb {
   transform: scale(0.9);
+}
+
+/* Mobile Responsive Styles */
+@media (max-width: 768px) {
+  .top-bar {
+    top: 12px;
+    padding: 8px 12px;
+    gap: 8px;
+    border-radius: 24px;
+    max-width: 95vw;
+  }
+
+  .top-bar .brand h1 {
+    font-size: 16px;
+  }
+
+  .top-bar .session-info {
+    font-size: 11px;
+  }
+
+  .room-controls {
+    gap: 6px;
+  }
+
+  .room-controls input {
+    width: 80px;
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+
+  .room-controls button {
+    font-size: 12px;
+    padding: 6px 12px;
+  }
+
+  .toolbar {
+    padding: 12px;
+    gap: 12px;
+    max-width: 90vw;
+  }
+
+  .toolbar.position-bottom {
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* Hide drag handle on mobile */
+  .drag-handle {
+    display: none;
+  }
+
+  .toolbar.position-left {
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  .tool-group {
+    gap: 8px;
+  }
+
+  .tool-group button {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .ink-dot {
+    width: 36px;
+    height: 36px;
+  }
+
+  .advanced-trigger {
+    width: 36px;
+    height: 36px;
+  }
+
+  .settings-toggle {
+    width: 44px;
+    height: 44px;
+  }
+
+  .width-adjuster input[type='range'] {
+    width: 80px;
+  }
+
+  .drag-handle {
+    width: 44px;
+    height: 44px;
+  }
+
+  .export-menu {
+    min-width: 140px;
+  }
+
+  .export-menu button {
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+
+  .menu-trigger {
+    width: 36px;
+    height: 36px;
+  }
+
+  .overlay p {
+    font-size: 16px;
+    padding: 0 20px;
+  }
+
+  .radial-menu {
+    transform: scale(0.8);
+  }
+}
+
+/* Touch-specific improvements */
+@media (hover: none) and (pointer: coarse) {
+
+  .toolbar button,
+  .room-controls button,
+  .export-menu button {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  .toolbar button:active,
+  .ink-dot:active {
+    transform: scale(0.95);
+  }
+
+  /* Increase touch targets */
+  .tool-group button {
+    min-width: 48px;
+    min-height: 48px;
+  }
+
+  .ink-dot {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
+
+/* Very small screens (phones in portrait) */
+@media (max-width: 480px) {
+  .top-bar {
+    top: 8px;
+    flex-wrap: wrap;
+    padding: 6px 10px;
+    border-radius: 28px;
+    max-width: 98vw;
+  }
+
+  .top-bar .brand {
+    order: 1;
+    flex: 1 1 100%;
+    margin-bottom: 6px;
+  }
+
+  .menu-trigger {
+    order: 2;
+  }
+
+  .room-controls {
+    order: 3;
+    flex: 1;
+    justify-content: flex-end;
+  }
+
+  .room-controls input {
+    width: 70px;
+    font-size: 11px;
+  }
+
+  .room-controls button {
+    font-size: 11px;
+    padding: 5px 10px;
+  }
+
+  .toolbar {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .toolbar.position-bottom {
+    bottom: 100px;
+  }
+
+  .tool-group {
+    gap: 6px;
+  }
+
+  .width-adjuster input[type='range'] {
+    width: 60px;
+  }
 }
