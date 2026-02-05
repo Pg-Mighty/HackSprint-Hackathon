@@ -115,13 +115,22 @@ export default function App() {
     };
   }, [resetUiTimer]);
 
-  // Drift Calculation
+  // Magnet Drag Style
   const driftStyle = useMemo(() => {
+    if (isTbDragging) {
+      return {
+        left: `${mousePos.x}px`,
+        top: `${mousePos.y}px`,
+        transform: 'translate(-50%, -50%)',
+        transition: 'none', // Snap to mouse instantly while dragging
+        cursor: 'grabbing'
+      };
+    }
     if (tbPos !== 'bottom') return {};
     const centerX = window.innerWidth / 2;
     const offsetX = (mousePos.x - centerX) * 0.03;
     return { left: `calc(50% + ${offsetX}px)`, transform: 'translateX(-50%)' };
-  }, [mousePos.x, tbPos]);
+  }, [mousePos.x, mousePos.y, tbPos, isTbDragging]);
 
   // STOMP Logic
   const roomDestinations = useMemo(() => {
@@ -210,7 +219,8 @@ export default function App() {
     e.preventDefault();
     setIsTbDragging(true);
     const onMove = (me) => {
-      if (me.clientX < 240) setTbPos('left');
+      setMousePos({ x: me.clientX, y: me.clientY }); // Keep mousePos updated for the magnet effect
+      if (me.clientX < 150) setTbPos('left');
       else setTbPos('bottom');
     };
     const onUp = () => {
@@ -229,15 +239,25 @@ export default function App() {
   }, []);
 
   const handleMouseDown = (e) => {
+    const clickedOnEmpty = e.target === e.target.getStage();
+
+    if (tool === 'select') {
+      if (clickedOnEmpty) {
+        setSelectedId(null);
+      } else {
+        const name = e.target.name();
+        // Only select if it's one of our shapes, not a Transformer anchor
+        if (shapes.some(s => s.id === name)) {
+          setSelectedId(name);
+        }
+      }
+      return;
+    }
+
     if (!joined || (e.evt && e.evt.button !== 0)) return;
     if (radialMenu.visible) { setRadialMenu({ visible: false, x: 0, y: 0 }); return; }
 
-    const clickedOnEmpty = e.target === e.target.getStage();
     if (clickedOnEmpty) setSelectedId(null);
-    if (tool === 'select') {
-      if (!clickedOnEmpty) setSelectedId(e.target.id());
-      return;
-    }
 
     const stage = stageRef.current;
     const pointer = stage.getPointerPosition();
@@ -365,11 +385,11 @@ export default function App() {
       </header>
 
       <div
-        className={`ui-atom toolbar position-${tbPos} ${(!uiVisible || !!drawingLineId || !!drawingShapeId) && !isTbDragging ? 'hidden' : ''}`}
+        className={`ui-atom toolbar position-${tbPos} ${isTbDragging ? 'dragging' : ''} ${(!uiVisible || !!drawingLineId || !!drawingShapeId) && !isTbDragging ? 'hidden' : ''}`}
         style={driftStyle}
       >
         <div className="drag-handle" onMouseDown={handleDragStart}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="9" cy="5" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="9" cy="19" r="1.5" /><circle cx="15" cy="5" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="15" cy="19" r="1.5" /></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20" /></svg>
         </div>
         <div className="tool-group">
           {tools.map(t => (
@@ -433,7 +453,7 @@ export default function App() {
               />
             ))}
             {shapes.map((s) => {
-              const cp = { id: s.id, key: s.id, stroke: s.color, strokeWidth: 2, shadowColor: lastStrokeId === s.id ? s.color : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
+              const cp = { id: s.id, name: s.id, key: s.id, stroke: s.color, strokeWidth: 2, shadowColor: lastStrokeId === s.id ? s.color : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
               return s.type === 'rect' ? (
                 <Rect {...cp} x={s.x} y={s.y} width={s.width} height={s.height} />
               ) : (

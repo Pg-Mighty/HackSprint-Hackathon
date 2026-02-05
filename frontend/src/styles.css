@@ -156,9 +156,10 @@ body {
   padding: 6px 14px;
   border-radius: 20px;
   font-size: 13px;
+  font-weight: 600;
   outline: none;
-  width: 100px;
-  color: var(--ink-color);
+  width: 110px;
+  color: var(--accent-color);
   transition: width 0.4s var(--inertia);
 }
 
@@ -198,7 +199,34 @@ body {
   border-radius: var(--radius-pill);
   transition:
     opacity 0.8s var(--inertia),
-    transform var(--drift-speed) var(--inertia);
+    transform var(--drift-speed) var(--inertia),
+    width 0.4s var(--inertia),
+    height 0.4s var(--inertia),
+    padding 0.4s var(--inertia);
+  overflow: hidden;
+}
+
+.toolbar.dragging {
+  width: 48px;
+  height: 48px;
+  padding: 0 !important;
+  gap: 0 !important;
+  border-radius: 50%;
+  justify-content: center;
+  border-color: var(--accent-color);
+  background: var(--accent-color);
+}
+
+.toolbar.dragging .tool-group,
+.toolbar.dragging .brand,
+.toolbar.dragging .room-controls {
+  display: none !important;
+}
+
+.toolbar.dragging .drag-handle {
+  opacity: 1;
+  color: white;
+  margin: 0;
 }
 
 /* Asymmetric Positioning via inline styles in React */
