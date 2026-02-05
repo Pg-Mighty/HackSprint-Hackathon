@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
+import { Client } from '@stomp/stompjs';
+import SockJS from 'sockjs-client';
 import { Circle, Layer, Rect, Stage, Line, Text } from 'react-konva';
 
 const DEFAULT_COLOR = '#2563eb';
 
 const buildId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-const socketUrl = import.meta.env.VITE_SOCKET_URL || window.location.origin;
+//const socketUrl = import.meta.env.VITE_SOCKJS_URL || `${window.location.origin}/whiteboard-sockets`;
+const socketUrl = 'http://localhost:8080/whiteboard-sockets';
 
 const tools = [
   { id: 'pen', label: 'Pen' },
@@ -14,15 +16,29 @@ const tools = [
   { id: 'circle', label: 'Circle' }
 ];
 
-const createSocket = () =>
-  io(socketUrl, {
-    autoConnect: false,
-    transports: ['websocket']
+const createStompClient = ({ onConnect, onDisconnect }) =>
+  new Client({
+    reconnectDelay: 5000,
+    webSocketFactory: () => new SockJS(socketUrl),
+    onConnect,
+    onDisconnect
   });
+
+const safeParse = (message) => {
+  if (!message?.body) {
+    return null;
+  }
+  try {
+    return JSON.parse(message.body);
+  } catch (error) {
+    return null;
+  }
+};
 
 export default function App() {
   const stageRef = useRef(null);
-  const socketRef = useRef(null);
+  const stompRef = useRef(null);
+  const clientIdRef = useRef(buildId());
   const [roomId, setRoomId] = useState('');
   const [joined, setJoined] = useState(false);
   const [tool, setTool] = useState('pen');
@@ -61,111 +77,157 @@ export default function App() {
     return () => window.removeEventListener('resize', updateSize);
   }, []);
 
-  const socket = useMemo(() => {
-    const instance = createSocket();
-    socketRef.current = instance;
-    return instance;
-  }, []);
+  const roomDestinations = useMemo(() => {
+    if (!roomId) {
+      return null;
+    }
+    return {
+      appBase: `/app/rooms/${roomId}`,
+      topicBase: `/topic/rooms/${roomId}`
+    };
+  }, [roomId]);
 
   useEffect(() => {
-    if (!socket) {
+    return () => {
+      stompRef.current?.deactivate();
+    };
+  }, []);
+
+  const connectToRoom = () => {
+    if (!roomDestinations) {
       return;
     }
 
-    const handleLineCreated = (incoming) => {
-      setLines((prev) => {
-        if (prev.some((line) => line.id === incoming.id)) {
-          return prev;
-        }
-        return [...prev, incoming];
-      });
-    };
+    stompRef.current?.deactivate();
 
-    const handleLineUpdated = (incoming) => {
-      setLines((prev) => prev.map((line) => (line.id === incoming.id ? incoming : line)));
-    };
+    const client = createStompClient({
+      onConnect: () => {
+        const { topicBase, appBase } = roomDestinations;
 
-    const handleShapeCreated = (incoming) => {
-      setShapes((prev) => {
-        if (prev.some((shape) => shape.id === incoming.id)) {
-          return prev;
-        }
-        return [...prev, incoming];
-      });
-    };
+        client.subscribe(`${topicBase}/line-created`, (message) => {
+          const incoming = safeParse(message);
+          if (!incoming) {
+            return;
+          }
+          setLines((prev) => {
+            if (prev.some((line) => line.id === incoming.id)) {
+              return prev;
+            }
+            return [...prev, incoming];
+          });
+        });
 
-    const handleShapeUpdated = (incoming) => {
-      setShapes((prev) => prev.map((shape) => (shape.id === incoming.id ? incoming : shape)));
-    };
+        client.subscribe(`${topicBase}/line-updated`, (message) => {
+          const incoming = safeParse(message);
+          if (!incoming) {
+            return;
+          }
+          setLines((prev) =>
+            prev.map((line) => (line.id === incoming.id ? incoming : line))
+          );
+        });
 
-    const handleCursorUpdated = (incoming) => {
-      setCursors((prev) => ({ ...prev, [incoming.id]: incoming }));
-    };
+        client.subscribe(`${topicBase}/shape-created`, (message) => {
+          const incoming = safeParse(message);
+          if (!incoming) {
+            return;
+          }
+          setShapes((prev) => {
+            if (prev.some((shape) => shape.id === incoming.id)) {
+              return prev;
+            }
+            return [...prev, incoming];
+          });
+        });
 
-    const handleCursorLeft = (id) => {
-      setCursors((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-    };
+        client.subscribe(`${topicBase}/shape-updated`, (message) => {
+          const incoming = safeParse(message);
+          if (!incoming) {
+            return;
+          }
+          setShapes((prev) =>
+            prev.map((shape) => (shape.id === incoming.id ? incoming : shape))
+          );
+        });
 
-    const handleStateSync = (incoming) => {
-      if (incoming?.lines) {
-        setLines(incoming.lines);
+        client.subscribe(`${topicBase}/cursor-updated`, (message) => {
+          const incoming = safeParse(message);
+          if (!incoming) {
+            return;
+          }
+          setCursors((prev) => ({ ...prev, [incoming.id]: incoming }));
+        });
+
+        client.subscribe(`${topicBase}/cursor-left`, (message) => {
+          const incoming = safeParse(message);
+          if (!incoming?.id) {
+            return;
+          }
+          setCursors((prev) => {
+            const next = { ...prev };
+            delete next[incoming.id];
+            return next;
+          });
+        });
+
+        client.subscribe(`${topicBase}/state-sync`, (message) => {
+          const incoming = safeParse(message);
+          if (incoming?.lines) {
+            setLines(incoming.lines);
+          }
+          if (incoming?.shapes) {
+            setShapes(incoming.shapes);
+          }
+        });
+
+        client.subscribe(`${topicBase}/request-state`, (message) => {
+          if (!message) {
+            return;
+          }
+          client.publish({
+            destination: `${appBase}/state-sync`,
+            body: JSON.stringify({
+              roomId,
+              lines: linesRef.current,
+              shapes: shapesRef.current
+            })
+          });
+        });
+
+        client.publish({
+          destination: `${appBase}/request-state`,
+          body: JSON.stringify({ roomId, requesterId: clientIdRef.current })
+        });
+      },
+      onDisconnect: () => {
+        setCursors({});
       }
-      if (incoming?.shapes) {
-        setShapes(incoming.shapes);
-      }
-    };
+    });
 
-    const handleRequestState = () => {
-      socket.emit('state-sync', {
-        roomId,
-        lines: linesRef.current,
-        shapes: shapesRef.current
-      });
-    };
-
-    socket.on('line-created', handleLineCreated);
-    socket.on('line-updated', handleLineUpdated);
-    socket.on('shape-created', handleShapeCreated);
-    socket.on('shape-updated', handleShapeUpdated);
-    socket.on('cursor-updated', handleCursorUpdated);
-    socket.on('cursor-left', handleCursorLeft);
-    socket.on('state-sync', handleStateSync);
-    socket.on('request-state', handleRequestState);
-
-    return () => {
-      socket.off('line-created', handleLineCreated);
-      socket.off('line-updated', handleLineUpdated);
-      socket.off('shape-created', handleShapeCreated);
-      socket.off('shape-updated', handleShapeUpdated);
-      socket.off('cursor-updated', handleCursorUpdated);
-      socket.off('cursor-left', handleCursorLeft);
-      socket.off('state-sync', handleStateSync);
-      socket.off('request-state', handleRequestState);
-    };
-  }, [roomId, socket]);
+    stompRef.current = client;
+    client.activate();
+  };
 
   const joinRoom = () => {
     if (!roomId.trim()) {
       return;
     }
-    if (!socket.connected) {
-      socket.connect();
-    }
-    socket.emit('join-room', { roomId });
-    socket.emit('request-state', { roomId });
     setJoined(true);
+    connectToRoom();
   };
 
-  const emitLine = (event, line) => {
-    socket.emit(event, { ...line, roomId });
-  };
-
-  const emitShape = (event, shape) => {
-    socket.emit(event, { ...shape, roomId });
+  const publishRoomEvent = (destination, payload) => {
+    if (!roomDestinations) {
+      return;
+    }
+    const client = stompRef.current;
+    if (!client || !client.connected) {
+      return;
+    }
+    client.publish({
+      destination: `${roomDestinations.appBase}/${destination}`,
+      body: JSON.stringify({ ...payload, roomId })
+    });
   };
 
   const handleMouseDown = () => {
@@ -187,7 +249,7 @@ export default function App() {
       };
       setLines((prev) => [...prev, line]);
       setDrawingLineId(line.id);
-      emitLine('line-created', line);
+      publishRoomEvent('line-created', line);
     }
 
     if (tool === 'rect' || tool === 'circle') {
@@ -204,7 +266,7 @@ export default function App() {
       setShapes((prev) => [...prev, shape]);
       setDrawingShapeId(shape.id);
       setShapeStart(pointerPosition);
-      emitShape('shape-created', shape);
+      publishRoomEvent('shape-created', shape);
     }
   };
 
@@ -218,15 +280,12 @@ export default function App() {
       return;
     }
 
-    if (socket.connected) {
-      socket.emit('cursor-updated', {
-        id: socket.id,
-        x: pointerPosition.x,
-        y: pointerPosition.y,
-        color: strokeColor,
-        roomId
-      });
-    }
+    publishRoomEvent('cursor-updated', {
+      id: clientIdRef.current,
+      x: pointerPosition.x,
+      y: pointerPosition.y,
+      color: strokeColor
+    });
 
     if (tool === 'pen' && drawingLineId) {
       setLines((prev) => {
@@ -238,7 +297,7 @@ export default function App() {
             ...line,
             points: [...line.points, pointerPosition.x, pointerPosition.y]
           };
-          emitLine('line-updated', updatedLine);
+          publishRoomEvent('line-updated', updatedLine);
           return updatedLine;
         });
         return next;
@@ -264,7 +323,7 @@ export default function App() {
             height,
             radius
           };
-          emitShape('shape-updated', updated);
+          publishRoomEvent('shape-updated', updated);
           return updated;
         })
       );
@@ -278,9 +337,7 @@ export default function App() {
   };
 
   const handleMouseLeave = () => {
-    if (socket.connected) {
-      socket.emit('cursor-left', socket.id);
-    }
+    publishRoomEvent('cursor-left', { id: clientIdRef.current });
   };
 
   const downloadPNG = () => {
@@ -427,18 +484,20 @@ export default function App() {
                 />
               )
             )}
-            {Object.values(cursors).map((cursor) => (
-              <React.Fragment key={cursor.id}>
-                <Circle x={cursor.x} y={cursor.y} radius={4} fill={cursor.color} />
-                <Text
-                  text={cursor.id.slice(0, 4)}
-                  x={cursor.x + 8}
-                  y={cursor.y + 6}
-                  fontSize={12}
-                  fill={cursor.color}
-                />
-              </React.Fragment>
-            ))}
+            {Object.values(cursors)
+              .filter((cursor) => cursor.id !== clientIdRef.current)
+              .map((cursor) => (
+                <React.Fragment key={cursor.id}>
+                  <Circle x={cursor.x} y={cursor.y} radius={4} fill={cursor.color} />
+                  <Text
+                    text={cursor.id.slice(0, 4)}
+                    x={cursor.x + 8}
+                    y={cursor.y + 6}
+                    fontSize={12}
+                    fill={cursor.color}
+                  />
+                </React.Fragment>
+              ))}
           </Layer>
         </Stage>
         {!joined && (
