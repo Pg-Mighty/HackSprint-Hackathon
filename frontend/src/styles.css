@@ -263,6 +263,12 @@ body {
   cursor: grab;
   opacity: 0.2;
   transition: opacity 0.3s ease;
+  color: var(--ink-color);
+}
+
+.app.dark .drag-handle {
+  color: #ffffff;
+  opacity: 0.4;
 }
 
 .toolbar:hover .drag-handle {
@@ -314,6 +320,32 @@ body {
   color: white;
   transform: scale(1.1) translateY(-2px) !important;
   box-shadow: 0 8px 24px rgba(93, 93, 255, 0.25);
+}
+
+@keyframes tool-manifest {
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.1);
+  }
+
+  100% {
+    transform: scale(1.1);
+  }
+}
+
+@keyframes icon-pulse {
+
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.1);
+  }
 }
 
 .app.dark .tool-group button {

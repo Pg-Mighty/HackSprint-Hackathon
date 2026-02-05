@@ -453,7 +453,7 @@ export default function App() {
               />
             ))}
             {shapes.map((s) => {
-              const cp = { id: s.id, name: s.id, key: s.id, stroke: s.color, strokeWidth: 2, shadowColor: lastStrokeId === s.id ? s.color : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
+              const cp = { id: s.id, name: s.id, key: s.id, stroke: s.color, strokeWidth: 2, strokeScaleEnabled: false, shadowColor: lastStrokeId === s.id ? s.color : 'transparent', shadowBlur: 40, shadowOpacity: lastStrokeId === s.id ? 1 : 0, draggable: tool === 'select', onTransformEnd: handleTransformEnd, onDragEnd: handleTransformEnd, scaleX: s.scaleX || 1, scaleY: s.scaleY || 1, rotation: s.rotation || 0 };
               return s.type === 'rect' ? (
                 <Rect {...cp} x={s.x} y={s.y} width={s.width} height={s.height} />
               ) : (
@@ -465,11 +465,16 @@ export default function App() {
                 ref={transformerRef}
                 rotateEnabled={true}
                 flipEnabled={false}
-                borderStroke="#5d5dff"
-                borderDash={[4, 4]}
-                anchorFill="#fff"
-                anchorStroke="#5d5dff"
-                anchorCornerRadius={3}
+                borderStroke={darkMode ? '#8181ff' : '#5d5dff'}
+                borderDash={[6, 4]}
+                borderStrokeWidth={1}
+                anchorFill={darkMode ? '#8181ff' : '#5d5dff'}
+                anchorStroke={darkMode ? '#ffffff' : '#5d5dff'}
+                anchorCornerRadius={4}
+                anchorSize={9}
+                anchorStrokeWidth={1.5}
+                padding={5}
+                keepRatio={false}
               />
             )}
             {Object.values(cursors).filter(c => c.id !== clientIdRef.current).map((c) => (
