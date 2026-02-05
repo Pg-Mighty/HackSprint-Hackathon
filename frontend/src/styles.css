@@ -1,5 +1,77 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
+/* Export Menu Styles */
+.menu-trigger {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all 0.2s var(--inertia);
+  color: var(--ink-color);
+  margin-right: 8px;
+  position: relative;
+}
+
+.menu-trigger:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.export-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: var(--ghost-bg);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--ghost-border);
+  border-radius: 12px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 5000;
+  box-shadow: var(--shadow);
+  min-width: 150px;
+}
+
+.export-menu button {
+  background: transparent;
+  border: none;
+  color: var(--ink-color);
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.export-menu button:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.export-menu .divider {
+  height: 1px;
+  background: var(--ghost-border);
+  margin: 4px;
+}
+
+.app.dark .export-menu button {
+  color: white;
+}
+
+.app.dark .export-menu button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 :root {
   --bg-color: #faf9f6;
   --ink-color: #1a1a1a;
